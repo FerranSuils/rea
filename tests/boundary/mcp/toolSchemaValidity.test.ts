@@ -28,6 +28,49 @@ function schemaErrors(tools: readonly ToolSchemas[]): string[] {
   );
 }
 
+/** Resolve a local JSON Pointer reference such as `#/$defs/name`. */
+const resolveReference = (schema: unknown, reference: string): unknown =>
+  reference === "#"
+    ? schema
+    : reference.startsWith("#/")
+      ? reference
+          .slice(2)
+          .split("/")
+          .reduce<unknown>(
+            (node, token) =>
+              typeof node === "object" && node !== null
+                ? Reflect.get(
+                    node,
+                    token.replaceAll("~1", "/").replaceAll("~0", "~"),
+                  )
+                : undefined,
+            schema,
+          )
+      : undefined;
+
+/** Name each `$ref` that reaches itself; strict clients reject such schemas. */
+function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
+  return tools.flatMap((tool) =>
+    (["inputSchema", "outputSchema"] as const).flatMap((kind) => {
+      const schema = tool[kind];
+      const found = new Set<string>();
+      const visit = (node: unknown, active: readonly string[]): void => {
+        if (typeof node !== "object" || node === null) return;
+        for (const [key, child] of Object.entries(node)) {
+          if (key === "$defs") continue;
+          if (key !== "$ref" || typeof child !== "string") visit(child, active);
+          else if (active.includes(child)) found.add(child);
+          else visit(resolveReference(schema, child), [...active, child]);
+        }
+      };
+      visit(schema, []);
+      return [...found].map(
+        (reference) => `${tool.name}.${kind}: ${reference}`,
+      );
+    }),
+  );
+}
+
 const advertiseAndEnforceProcessEnvironmentKeyConstraint =
   async (): Promise<void> => {
     const contract = TOOL_CONTRACTS.find(
@@ -148,6 +191,7 @@ describe("MCP JSON Schema validity", () => {
         TOOL_CONTRACTS.map(({ name }) => name).sort(),
       );
       expect(schemaErrors(tools)).toEqual([]);
+      expect(recursiveReferences(tools)).toEqual([]);
     } finally {
       await Promise.allSettled([client.close(), server.close()]);
     }
@@ -223,6 +267,7 @@ describe("MCP JSON Schema validity", () => {
 
   it("ships valid input and output schemas in the generated catalog", () => {
     expect(schemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
+    expect(recursiveReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
   });
 });
 
