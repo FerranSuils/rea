@@ -252,6 +252,21 @@ try {
     assert.deepEqual(await readFile(opaque), changed);
     cases++;
   }
+  const sectionBearingBytes = await readFile(join(root.path, "protected"));
+  const zeroSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
+    const section = protectedReport.sections.find((item) => item.type === type);
+    assert.notEqual(
+      section,
+      undefined,
+      `Required fixture table absent: ${type}`,
+    );
+    const bytes = Buffer.from(sectionBearingBytes);
+    bytes.writeBigUInt64LE(
+      0n,
+      Number(BigInt(section.header_location.offset)) + 56,
+    );
+    return [`zero-entry-${type}`, bytes, "invalid_input"];
+  });
   const unsupported = Buffer.from(object);
   unsupported.writeUInt16LE(183, 18);
   const core = Buffer.from(object);
@@ -264,6 +279,7 @@ try {
       object.subarray(0, object.length - 1),
       "invalid_input",
     ],
+    ...zeroSymbolEntries,
     ["arm64", unsupported, "unsupported_provider"],
     ["core", core, "unsupported_provider"],
   ]) {
