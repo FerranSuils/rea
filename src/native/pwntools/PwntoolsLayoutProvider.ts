@@ -4,7 +4,7 @@ import {
   capturedPwntoolsOutput,
 } from "./PwntoolsFailures.js";
 import { randomUUID } from "node:crypto";
-import { access, writeFile } from "node:fs/promises";
+import { access, stat, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   binaryLayoutPayloadSchema,
+  binaryLayoutSchema,
   type BinaryLayout,
   type InspectBinaryLayoutInput,
 } from "../../domain/native/binaryLayout.js";
@@ -70,7 +71,7 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
     > = () => PrivateRuntimeRoot.create({ prefix: "rea-elf-layout-" }),
   ) {}
 
-  /** Snapshot one explicit artifact and return complete static observations without executing its bytes. */
+  /** Snapshot one explicit artifact and return complete static observations without launching the selected object as a host process. */
   async inspect(
     input: InspectBinaryLayoutInput,
     options?: ExecutionOptions,
@@ -78,7 +79,8 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
     let root: Pick<PrivateRuntimeRoot, "path" | "close"> | undefined;
     let result: Result<BinaryLayout, AnalysisError>;
     let phase: "configuration" | "artifact-read" | "decoder" = "configuration";
-    let selectedPath = this.environment.REA_PWNTOOLS_PYTHON ?? "";
+    const executablePath = this.environment.REA_PWNTOOLS_PYTHON ?? "";
+    let selectedPath = executablePath;
     try {
       if (options?.signal?.aborted) throw new AnalysisCancelledError(OPERATION);
       if (process.platform !== "linux" || process.arch !== "x64")
@@ -93,6 +95,12 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
           selectedPath,
         );
       await access(selectedPath, constants.X_OK);
+      if (!(await stat(selectedPath)).isFile())
+        throw pwntoolsUnavailable(
+          "Selected Python executable must be a regular executable file, not a directory: " +
+            selectedPath,
+          selectedPath,
+        );
       phase = "artifact-read";
       selectedPath = input.path;
       const snapshot = await readStableArtifact(
@@ -198,7 +206,7 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
           },
         });
       }
-      result = ok({
+      const validated = binaryLayoutSchema.safeParse({
         ...reply.value,
         artifact: {
           path: input.path,
@@ -210,13 +218,34 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
           stderr: execution.stderr.text,
         },
       });
+      if (!validated.success)
+        throw new AnalysisOutputError(
+          OPERATION,
+          `ELF reply contains invalid source ranges or value meanings: ${validated.error.issues[0]?.message ?? "schema mismatch"}`,
+          { capturedOutput },
+        );
+      for (const table of validated.data.packed_relative_relocations) {
+        const start = Number(BigInt(table.location.offset));
+        const length = Number(BigInt(table.location.bytes));
+        if (
+          !Buffer.from(table.encoded_bytes_base64, "base64").equals(
+            snapshot.bytes.subarray(start, start + length),
+          )
+        )
+          throw new AnalysisOutputError(
+            OPERATION,
+            "Reported packed relocation bytes differ from the selected snapshot at their original file range.",
+            { capturedOutput },
+          );
+      }
+      result = ok(validated.data);
     } catch (cause: unknown) {
       result = err(
         options?.signal?.aborted &&
           (cause === options.signal.reason ||
             (cause instanceof Error && cause.name === "AbortError"))
           ? new AnalysisCancelledError(OPERATION)
-          : pwntoolsLayoutFailure(cause, phase, selectedPath),
+          : pwntoolsLayoutFailure(cause, phase, selectedPath, executablePath),
       );
     }
     if (root !== undefined) {

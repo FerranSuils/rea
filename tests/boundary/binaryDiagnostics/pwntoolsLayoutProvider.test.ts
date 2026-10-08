@@ -385,3 +385,30 @@ it.runIf(!unsupportedHost)(
     await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+it.runIf(!unsupportedHost).each(["directory", "missing-interpreter"])(
+  "identifies the configured executable on actual launch/preflight failure: %s",
+  async (scenario) => {
+    const { path, root } = await fixture();
+    const executable =
+      scenario === "directory" ? root : join(root, "broken-python");
+    if (scenario === "missing-interpreter")
+      await writeFile(
+        executable,
+        "#!/rea-missing-interpreter-for-boundary-test\n",
+        { mode: 0o700 },
+      );
+    const result = await new PwntoolsLayoutProvider({
+      REA_PWNTOOLS_PYTHON: executable,
+    }).inspect({ path });
+    if (result.ok) throw new Error("Expected unavailable executable");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        rejections: [{ diagnostics: { executable_path: executable } }],
+      },
+    });
+    expect(result.error._tag).toBe("ProviderSelectionError");
+    expect(await readFile(path, "utf8")).toBe("source-owned-seam-bytes");
+  },
+);

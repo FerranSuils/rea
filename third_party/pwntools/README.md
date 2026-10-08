@@ -29,3 +29,8 @@ The instance-local adapter subclass forwards the documented pyelftools 0.33
 pwntools 4.15.0 cached overrides. No upstream file or global method is changed.
 Sectionless dynamic string tables use unique DT_STRTAB/DT_STRSZ mappings to
 file-backed PT_LOAD bytes; unresolved coordinates remain explicitly unknown.
+
+PLT convenience inference uses the unchanged upstream Unicorn instruction
+emulator. REA labels those maps as derived static evidence. The no-execution
+verification claim concerns launching the selected object as a host process,
+not the absence of static instruction emulation inside an analysis engine.

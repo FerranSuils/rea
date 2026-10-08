@@ -86,6 +86,7 @@ try {
     ],
     ["relocatable", ["-c", "-fcommon", "-fPIC"]],
     ["library", ["-shared", "-fPIC", "-fno-stack-protector"]],
+    ["packed-relative", ["-shared", "-fPIC", "-Wl,-z,pack-relative-relocs"]],
   ])
     await execute(
       "gcc",
@@ -143,6 +144,7 @@ try {
     "plain",
     "relocatable",
     "library",
+    "packed-relative",
     "stripped",
     "sectionless",
     "unused-segment",
@@ -197,6 +199,27 @@ try {
         assert.equal(segment.offset, "0xffffffffffffffff");
         if (name === "unused-segment") assert.equal(segment.permissions, null);
         else assert.notEqual(segment.permissions, null);
+      }
+      assert.equal(value.relocation_inventory_completeness, "unknown");
+      if (name === "library" || name === "packed-relative") {
+        assert.equal(value.entry_point.reported_value, "0x0");
+        assert.equal(value.entry_point.meaning, "absent");
+      }
+      if (name === "packed-relative") {
+        assert.ok(value.packed_relative_relocations.length > 0);
+        for (const table of value.packed_relative_relocations) {
+          assert.equal(table.evidence_kind, "derived");
+          assert.equal(table.offset_meaning, "linked-virtual-address");
+          assert.equal(table.entry_source_locations, null);
+          assert.equal(table.addends, null);
+          assert.ok(table.entries.length > 0);
+          const start = Number(BigInt(table.location.offset));
+          const length = Number(BigInt(table.location.bytes));
+          assert.deepEqual(
+            Buffer.from(table.encoded_bytes_base64, "base64"),
+            bytes.subarray(start, start + length),
+          );
+        }
       }
       reports.set(name, value);
       assert.deepEqual(await readFile(path), bytes);
@@ -422,6 +445,64 @@ try {
       await inspect(mode, path, category);
       assert.deepEqual(await readFile(path), bytes);
       cases++;
+    }
+  }
+  const packedFile = await readFile(join(root.path, "packed-relative"));
+  const packedTable =
+    reports.get("packed-relative").packed_relative_relocations[0];
+  assert.notEqual(packedTable, undefined);
+  packedFile.writeBigUInt64LE(1n, Number(BigInt(packedTable.location.offset)));
+  const badPackedPath = join(root.path, "relr-bitmap-without-anchor");
+  await writeFile(badPackedPath, packedFile);
+  for (const mode of ["cli", "mcp"]) {
+    await inspect(mode, badPackedPath, "invalid_input");
+    assert.deepEqual(await readFile(badPackedPath), packedFile);
+    cases++;
+  }
+  const brokenPython = join(root.path, "broken-configured-python");
+  await writeFile(
+    brokenPython,
+    "#!/rea-missing-configured-python-interpreter\n",
+    { mode: 0o700 },
+  );
+  for (const configuredPython of [root.path, brokenPython]) {
+    const selectedEnvironment = {
+      ...environment,
+      REA_PWNTOOLS_PYTHON: configuredPython,
+    };
+    const selectedClient = new Client({
+      name: "unavailable-layout-verifier",
+      version: "1",
+    });
+    const selectedTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [entrypoint, "mcp"],
+      env: selectedEnvironment,
+      stderr: "pipe",
+    });
+    try {
+      await selectedClient.connect(selectedTransport);
+      for (const mode of ["cli", "mcp"]) {
+        const error = await inspect(
+          mode,
+          join(root.path, "protected"),
+          "unavailable",
+          selectedEnvironment,
+          selectedClient,
+        );
+        assert.equal(error.code, "provider_unavailable");
+        assert.equal(
+          error.details.rejections[0].diagnostics.executable_path,
+          configuredPython,
+        );
+        cases++;
+      }
+    } finally {
+      try {
+        await selectedClient.close();
+      } finally {
+        await selectedTransport.close();
+      }
     }
   }
   for (const mode of ["cli", "mcp"]) {

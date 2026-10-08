@@ -4,14 +4,14 @@ const unsignedHex = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]{0,15})$/);
 const index = z.number().int().nonnegative();
 const scalar = z.union([z.string(), z.number().int()]);
 const range = z.strictObject({ offset: unsignedHex, bytes: unsignedHex });
+const canonicalBase64 = z
+  .string()
+  .regex(
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$/,
+  );
 const name = z.strictObject({
   display: z.string(),
-  bytes_base64: z
-    .string()
-    .regex(
-      /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$/,
-    )
-    .nullable(),
+  bytes_base64: canonicalBase64.nullable(),
   location: range.nullable(),
   unknown_reason: z.string().nullable(),
 });
@@ -40,7 +40,7 @@ const binaryLayoutObjectSchema = z.strictObject({
   image_type: z.enum(["ET_EXEC", "ET_DYN", "ET_REL"]),
   entry_point: z.strictObject({
     reported_value: unsignedHex,
-    meaning: z.enum(["linked-virtual-address", "not-applicable"]),
+    meaning: z.enum(["linked-virtual-address", "not-applicable", "absent"]),
     execution_status: z.literal("unknown"),
   }),
   runtime_load_base: z.null(),
@@ -135,6 +135,21 @@ const binaryLayoutObjectSchema = z.strictObject({
         .nullable(),
     }),
   ),
+  packed_relative_relocations: z.array(
+    z.strictObject({
+      section_index: index,
+      location: range,
+      encoded_bytes_base64: canonicalBase64,
+      entries: z.array(
+        z.strictObject({ decoded_index: index, reported_offset: unsignedHex }),
+      ),
+      offset_meaning: z.enum(["linked-virtual-address", "unknown"]),
+      evidence_kind: z.literal("derived"),
+      entry_source_locations: z.null(),
+      addends: z.null(),
+    }),
+  ),
+  relocation_inventory_completeness: z.literal("unknown"),
   linkage: z.strictObject({
     needed_libraries: z.array(name),
     interpreters: z.array(name),
@@ -195,6 +210,19 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
       if (reported.location !== null)
         checkLocation(reported.location, [...path, "location"]);
     };
+    const expectedEntryMeaning =
+      value.image_type === "ET_REL"
+        ? "not-applicable"
+        : value.entry_point.reported_value === "0x0"
+          ? "absent"
+          : "linked-virtual-address";
+    if (value.entry_point.meaning !== expectedEntryMeaning)
+      context.addIssue({
+        code: "custom",
+        path: ["entry_point", "meaning"],
+        message:
+          "Entry meaning must distinguish zero/unused fields from an actual linked address.",
+      });
     for (const [index, section] of value.sections.entries()) {
       if (section.index !== index)
         context.addIssue({
@@ -250,6 +278,7 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
     }
     for (const [index, relocation] of value.relocations.entries())
       checkLocation(relocation.location, ["relocations", index, "location"]);
+    validatePackedRelativeTables(value, context, checkLocation);
     for (const facet of ["needed_libraries", "interpreters"] as const)
       for (const [index, reported] of value.linkage[facet].entries())
         checkName(reported, ["linkage", facet, index]);
@@ -260,3 +289,59 @@ export type InspectBinaryLayoutInput = z.infer<
   typeof inspectBinaryLayoutInputSchema
 >;
 export type BinaryLayout = z.infer<typeof binaryLayoutSchema>;
+
+const validatePackedRelativeTables = (
+  value: z.output<typeof binaryLayoutObjectSchema>,
+  context: z.RefinementCtx,
+  checkLocation: (
+    location: z.output<typeof range>,
+    path: (string | number)[],
+  ) => void,
+): void => {
+  for (const [
+    tableIndex,
+    table,
+  ] of value.packed_relative_relocations.entries()) {
+    checkLocation(table.location, [
+      "packed_relative_relocations",
+      tableIndex,
+      "location",
+    ]);
+    const encodedBytes =
+      (table.encoded_bytes_base64.length * 3) / 4 -
+      (table.encoded_bytes_base64.endsWith("==")
+        ? 2
+        : table.encoded_bytes_base64.endsWith("=")
+          ? 1
+          : 0);
+    if (
+      !Number.isInteger(encodedBytes) ||
+      BigInt(encodedBytes) !== BigInt(table.location.bytes)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["packed_relative_relocations", tableIndex],
+        message:
+          "Complete packed table bytes must match its original file range.",
+      });
+    const section = value.sections[table.section_index];
+    if (
+      section?.type !== "SHT_RELR" ||
+      section.offset !== table.location.offset ||
+      section.size !== table.location.bytes
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["packed_relative_relocations", tableIndex, "section_index"],
+        message:
+          "Packed relative evidence must retain its original RELR section identity and range.",
+      });
+    for (const [decoded, entry] of table.entries.entries())
+      if (entry.decoded_index !== decoded)
+        context.addIssue({
+          code: "custom",
+          path: ["packed_relative_relocations", tableIndex, "entries", decoded],
+          message: "Decoded offsets must preserve upstream iterator order.",
+        });
+  }
+};

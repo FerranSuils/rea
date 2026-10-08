@@ -18,6 +18,8 @@ export const binaryLayoutFixture = (
   segments: [],
   symbols: [],
   relocations: [],
+  packed_relative_relocations: [],
+  relocation_inventory_completeness: "unknown",
   linkage: {
     needed_libraries: [],
     interpreters: [],

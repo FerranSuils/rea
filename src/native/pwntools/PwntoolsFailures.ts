@@ -28,6 +28,7 @@ export const pwntoolsLayoutFailure = (
   cause: unknown,
   phase: string,
   path: string,
+  executablePath = path,
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof OwnedCommandFailure) {
@@ -61,6 +62,18 @@ export const pwntoolsLayoutFailure = (
     if (cause.reason === "output-limit")
       return new AnalysisOutputError(OPERATION, cause.message, outputOptions);
   }
+  if (
+    cause instanceof Error &&
+    "code" in cause &&
+    "syscall" in cause &&
+    typeof cause.syscall === "string" &&
+    cause.syscall.startsWith("spawn ")
+  )
+    return pwntoolsUnavailable(
+      `Selected Python could not launch (${String(cause.code)}): ${executablePath}. Check the configured executable, its interpreter and host execute access.`,
+      executablePath,
+      String(cause.code),
+    );
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "integrity")
       return new AnalysisArtifactChangedError(OPERATION, path, cause.message, {

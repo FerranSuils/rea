@@ -24,8 +24,8 @@ REA_PWNTOOLS_PYTHON=/absolute/isolated-env/bin/python \
 }
 ```
 
-REA never installs Python, packages or GDB, changes a user init file, executes
-the selected object, or requests runtime library resolution. The Python process
+REA never installs Python, packages or GDB, changes a user init file, launches
+the selected object as a host process, or requests runtime library resolution. The Python process
 uses isolated mode and an owned cache. Exact upstream profiles are recorded in
 [upstream provenance](../third_party/pwntools/README.md).
 
@@ -34,14 +34,18 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
 - Artifact path, SHA-256 and size identify original selected bytes. All parsing
   reads an owned stable snapshot; the original is unchanged.
 - Addresses, offsets, lengths and flags are hexadecimal strings. A linked
-  address is not a runtime address. Runtime load base remains null.
+  address is not a runtime address. Runtime load base remains null. A zero
+  EXEC/DYN entry means absent; a relocatable entry is not applicable.
 - Each symbol retains its table and entry index. Its reported value can mean
   undefined, alignment, absolute value, no address, unknown section index,
   section offset, TLS offset or linked virtual address. Duplicate names remain
   separate entries. SHN_XINDEX remains unresolved in the selected upstream
   representation; its external index table is not silently treated as resolved.
 - Relocatable objects have section-relative relocations and no executable entry
-  claim. Signed relocation addends are decimal strings.
+  claim. Signed REL/RELA relocation addends are decimal strings. Packed RELR
+  tables retain full original bytes and upstream-decoded offsets as derived
+  evidence, with per-offset packed-word locations and implicit addends unknown.
+  Overall relocation inventory completeness remains unknown.
 - Name display strings may contain upstream replacement characters. Raw name
   bytes and string-table ranges retain observed identity where resolvable;
   ranges include the terminating NUL and base64 bytes exclude it.
@@ -55,7 +59,9 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
   Upstream RELRO/canary heuristics rely on sections and can be incomplete in
   this case; their reported candidates retain an explicit coverage limitation.
 - DT_NEEDED/PT_INTERP are reported names, not resolved runtime paths. GOT/PLT
-  maps are derived convenience views and may collapse aliases; completeness
+  maps are derived convenience views and may collapse aliases. PLT inference
+  can emulate selected instructions in Unicorn; its outputs are static candidates.
+  Exec syscall tracing observes host process launches. Map completeness
   remains unknown and original upstream warnings are returned inline.
 - Canary, PIE, NX, executable-stack and RELRO are static inferences. NX and
   executable-stack are separate upstream indicators: on x86-64 an executable

@@ -1,6 +1,6 @@
 """Offline adapter to unchanged pwntools 4.15.0; never use libs/maps/libc.
 
-Owned request/snapshot/reply paths are supplied by REA. No target execution,
+Owned request/snapshot/reply paths are supplied by REA. No host target-process launch,
 user configuration initialization, debugger startup, or dependency installation.
 """
 import base64
@@ -135,7 +135,7 @@ def inspect_elf(path, cache):
             length = len(content)
             all_sections = list(image.iter_sections())
             shstrings = image.get_section(image.get_shstrndx()) if all_sections else None
-            sections, segments, symbols, relocations = [], [], [], []
+            sections, segments, symbols, relocations, packed_relatives = [], [], [], [], []
             needed, interpreters = [], []
             for index, section in enumerate(all_sections):
                 h = section.header
@@ -171,6 +171,15 @@ def inspect_elf(path, cache):
                             "type": raw.r_info_type, "symbol_table_index": h.sh_link, "symbol_index": raw.r_info_sym,
                             "addend": None if "r_addend" not in raw else str(raw.r_addend),
                         })
+                if h.sh_type == "SHT_RELR":
+                    packed_relatives.append({
+                        "section_index": index,
+                        "location": location(h.sh_offset, h.sh_size, length),
+                        "encoded_bytes_base64": base64.b64encode(content[h.sh_offset:h.sh_offset + h.sh_size]).decode("ascii"),
+                        "entries": [{"decoded_index": decoded, "reported_offset": address(relocation.entry.r_offset)} for decoded, relocation in enumerate(section.iter_relocations())],
+                        "offset_meaning": "unknown" if image.header.e_type == "ET_REL" else "linked-virtual-address",
+                        "evidence_kind": "derived", "entry_source_locations": None, "addends": None,
+                    })
             for index, segment in enumerate(image.iter_segments()):
                 h = segment.header
                 backing = h.p_type != "PT_NULL" and h.p_filesz != 0
@@ -200,8 +209,9 @@ def inspect_elf(path, cache):
             return {
                 "format": "elf", "architecture": {"machine": image.header.e_machine, "bits": image.bits, "byte_order": image.endian},
                 "image_type": image.header.e_type,
-                "entry_point": {"reported_value": address(image.header.e_entry), "meaning": "not-applicable" if image.header.e_type == "ET_REL" else "linked-virtual-address", "execution_status": "unknown"},
+                "entry_point": {"reported_value": address(image.header.e_entry), "meaning": "not-applicable" if image.header.e_type == "ET_REL" else "absent" if image.header.e_entry == 0 else "linked-virtual-address", "execution_status": "unknown"},
                 "runtime_load_base": None, "sections": sections, "segments": segments, "symbols": symbols, "relocations": relocations,
+                "packed_relative_relocations": packed_relatives, "relocation_inventory_completeness": "unknown",
                 "linkage": {"needed_libraries": needed, "interpreters": interpreters,
                     "got": [{"display_name": name, "address": address(value)} for name, value in image.got.items()],
                     "plt": [{"display_name": name, "address": address(value)} for name, value in image.plt.items()],
@@ -212,9 +222,10 @@ def inspect_elf(path, cache):
                     "SHN_XINDEX symbol values remain unresolved in this upstream representation; an external index table does not establish a resolved index in this report.",
                     "Reported values preserve linked addresses, section offsets, TLS offsets, alignment and absolute values separately. Runtime load base and library paths are unknown.",
                     "Names are display strings plus raw bytes and file ranges where resolvable; section/table/entry indices preserve identity and duplicates. Name ranges include their terminating NUL; raw name bytes exclude it.",
-                    "GOT/PLT are derived upstream convenience maps; aliases may collapse and warnings may indicate incomplete coverage. Their completeness is unknown.",
+                    "Ordinary relocation rows cover REL/RELA. RELR tables retain complete encoded bytes and upstream-decoded offsets as derived evidence; per-offset packed-word locations and implicit addends remain unknown. Relocation inventory completeness is unknown, including other encodings and missing section tables.",
+                    "GOT/PLT are derived upstream convenience maps; PLT inference can emulate selected instructions in Unicorn. They do not establish target runtime behavior; aliases may collapse and warnings may indicate incomplete coverage. Their completeness is unknown.",
                     "Mitigations are upstream static heuristics, not runtime protection. ET_DYN does not prove an executable; absent canary symbols do not prove every function unprotected.",
-                    "This profile inspects ELF EXEC/DYN/REL layout only. It does not analyze recorded cores, resolve loaded libraries, execute the target or start a debugger.",
+                    "This profile inspects ELF EXEC/DYN/REL layout only. It does not analyze recorded cores, resolve loaded libraries, launch the target as a host process or start a debugger.",
                     "Symbol/relocation inventories reflect original section tables. A sectionless image can still report dynamic dependency names; missing tables do not prove absence of dynamic symbols or relocations.",
                     *(["Sectionless images lack the .dynamic section and symbol tables used by upstream heuristics. RELRO/canary indicators may be incomplete; their values remain reported static candidates, with protection coverage unknown."] if not all_sections else []),
                 ],
