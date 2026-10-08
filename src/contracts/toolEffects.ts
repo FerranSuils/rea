@@ -65,6 +65,11 @@ export const TOOL_EFFECTS: Readonly<Record<string, ToolEffects>> = {
     launchesProcess: true,
     accessesNetwork: true,
   }),
+  inspect_binary_layout: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+  }),
   inspect_firmware_regions: effects({
     mutatesSession: true,
     launchesProcess: true,

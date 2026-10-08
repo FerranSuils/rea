@@ -33,6 +33,7 @@ type ProviderDescriptor = ProviderCapability;
 export type AvailabilityPolicy = {
   readonly processCaptureEnabled: boolean;
   readonly optionalProviderLoadFailures?: OptionalProviderLoadFailures;
+  readonly binaryLayoutEnabled?: boolean;
   readonly firmwareInspectionEnabled?: boolean;
   readonly firmwareExtractionEnabled?: boolean;
   readonly androidAnalysisEnabled?: boolean;
@@ -279,6 +280,14 @@ const workflowAvailabilityFor = ({
           reason: "provider_missing",
           remediation:
             "On Linux x64, provide an absolute REA_WAKARU_COMMAND for Wakaru 1.13.0 and util-linux prlimit. No binary target is required.",
+        };
+  if (name === "inspect_binary_layout")
+    return policy.binaryLayoutEnabled === true
+      ? { reason: "available", remediation: null }
+      : {
+          reason: "provider_missing",
+          remediation:
+            "On Linux x64, set absolute REA_PWNTOOLS_PYTHON to caller-supplied Python with pwntools 4.15.0. No active binary target is required.",
         };
   if (kind === "firmware-provider") {
     const enabled =

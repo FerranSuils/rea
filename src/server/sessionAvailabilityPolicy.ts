@@ -18,6 +18,7 @@ export interface SessionAvailabilityDefaults {
     | "androidAnalysisEnabled"
     | "javascriptRecoveryEnabled"
     | "webModuleResolutionEnabled"
+    | "binaryLayoutEnabled"
     | "firmwareInspectionEnabled"
     | "firmwareExtractionEnabled"
   >;
@@ -32,6 +33,8 @@ export const sessionAvailabilityPolicy = (
     configured ??
     (() => ({
       processCaptureEnabled: platform !== "win32",
+      binaryLayoutEnabled:
+        defaults.optionalFeatures?.binaryLayoutEnabled ?? false,
       firmwareInspectionEnabled:
         defaults.optionalFeatures?.firmwareInspectionEnabled ?? false,
       firmwareExtractionEnabled:

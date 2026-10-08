@@ -1,3 +1,6 @@
+import { registerBinaryDiagnosticsTools } from "./registerBinaryDiagnosticsTools.js";
+import { createBinaryLayoutService } from "../composition/binaryDiagnostics.js";
+import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import { McpServer } from "@modelcontextprotocol/server";
 import { isAbsolute } from "node:path";
 
@@ -60,6 +63,7 @@ const ACTIVE_TARGET_INSTRUCTIONS =
 
 export interface CreateServerOptions {
   readonly logger?: Logger;
+  readonly binaryLayout?: BinaryLayoutService;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
@@ -88,6 +92,11 @@ const installSessionToolAvailability = (
       webModuleResolutionEnabled:
         options.webModuleTrace !== undefined ||
         isAbsolute(process.env.REA_BROWSER_EXECUTABLE ?? ""),
+      binaryLayoutEnabled:
+        options.binaryLayout !== undefined ||
+        (process.platform === "linux" &&
+          process.arch === "x64" &&
+          isAbsolute(process.env.REA_PWNTOOLS_PYTHON ?? "")),
       firmwareInspectionEnabled:
         options.firmwareAnalysis !== undefined ||
         (process.platform === "linux" &&
@@ -187,6 +196,12 @@ export const createServer = (
   registerAndroidTools(
     server,
     new AndroidAnalysisService(android),
+    toolLogger,
+    recordEvidence,
+  );
+  registerBinaryDiagnosticsTools(
+    server,
+    options.binaryLayout ?? createBinaryLayoutService(),
     toolLogger,
     recordEvidence,
   );

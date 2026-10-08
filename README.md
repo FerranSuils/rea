@@ -163,6 +163,8 @@ provider guides describe their supported platforms.
 
 Deep native binary analysis requires [Hopper](https://www.hopperapp.com/), [Ghidra](#ghidra-analysis-provider), or [IDA Pro](#ida-pro-analysis-provider). Hopper is separate software with its own license; its demo supports analysis with vendor-defined limits. Ghidra and IDA are bring-your-own providers.
 
+Offline binary layout inspection uses caller-supplied pwntools on Linux x64, independent of an active disassembler target. See [Binary diagnostics](docs/binary-diagnostics.md) for file/linked-address semantics, raw name evidence and exact upstream profiles.
+
 Firmware region inspection and explicit extraction use caller-supplied Binwalk and Unblob on Linux. See [Firmware analysis](docs/firmware-analysis.md) for setup, provenance, resource limits and native handoff.
 
 Static APK analysis uses a separately supplied headless JADX JAR and a full JDK, with no emulator or APK execution. See [Android analysis](docs/android-analysis.md) for setup, CLI/MCP operations, coverage and public test fixtures. Authenticated IPA and macOS `.app`, ZIP, or DMG inventory Evidence can be projected into bundle anatomy, such as XPC services, app extensions, login items, privileged helpers, and launchd plists, with [Apple application analysis](docs/apple-application-analysis.md).
@@ -405,7 +407,7 @@ See [native investigation](docs/native-investigation.md) for keyed archives, ins
 | ------------------------- | ----: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Native inspection         |    41 | functions, pseudocode, assembly, strings, symbols, calls, references, annotations, byte reads, and file offsets                                                                                          |
 | Investigation workflows   |    14 | app overviews, function dossiers, native APIs and dispatch, batch decompilation, feature traces, call paths, call graphs, Swift and Objective-C discovery                                                |
-| Native macOS utilities    |     7 | Mach-O metadata, code signatures, plists, architectures, and Swift demangling without launching Hopper                                                                                                   |
+| Native binary utilities   |     8 | macOS Mach-O metadata, signatures, plists, architectures and Swift demangling; Linux ELF layout and static mitigation evidence                                                                           |
 | Artifact graph            |     5 | directory and package inventories, compiled Interface Builder files, Apple asset catalogs, and extraction                                                                                                |
 | Managed PE/CLI            |     7 | .NET identity, metadata, CIL instructions, native dependencies, reconstruction imports, and build comparisons                                                                                            |
 | Firmware                  |     2 | Linux firmware region inspection and explicit extraction                                                                                                                                                 |

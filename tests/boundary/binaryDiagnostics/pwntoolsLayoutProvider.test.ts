@@ -1,0 +1,245 @@
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+import { access, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
+import { expect, it, onTestFinished } from "vitest";
+import { PwntoolsLayoutProvider } from "../../../src/native/pwntools/PwntoolsLayoutProvider.js";
+import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
+import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
+import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
+import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
+
+const requestSchema = z.strictObject({
+  snapshot_path: z.string(),
+  reply_path: z.string(),
+});
+
+it.each(["cancelled", "output-limit", "process"])(
+  "releases an acquired decoder and its snapshot after %s",
+  async (scenario) => {
+    const { path } = await fixture();
+    const controller = new AbortController();
+    let ownedPath = "";
+    let pid: number | undefined;
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      async (spawn) => {
+        ownedPath = spawn.cwd ?? "";
+        const launched = await spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            scenario === "cancelled"
+              ? 'process.stdout.write("ready\\n"); setInterval(() => undefined, 1000)'
+              : scenario === "output-limit"
+                ? 'process.stdout.write("x".repeat(1048577))'
+                : 'process.stderr.write("decoder exited unexpectedly"); process.exit(7)',
+          ],
+        });
+        pid = launched.process.pid;
+        if (scenario === "cancelled") {
+          await waitForProviderProcessReady(launched.process);
+          setImmediate(() => controller.abort());
+        }
+        return launched;
+      },
+    );
+    const result = await provider.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag:
+          scenario === "cancelled"
+            ? "AnalysisCancelledError"
+            : scenario === "output-limit"
+              ? "AnalysisOutputError"
+              : "ProviderAdapterError",
+        ...(scenario === "process"
+          ? {
+              diagnostics: {
+                exit_code: 7,
+                stderr: "decoder exited unexpectedly",
+              },
+            }
+          : {}),
+      },
+    });
+    if (pid === undefined) throw new Error("Decoder was not acquired");
+    const acquiredPid = pid;
+    expect(() => process.kill(acquiredPid, 0)).toThrow();
+    await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path, "utf8")).toBe("source-owned-seam-bytes");
+  },
+);
+
+it("reports private storage denial as an adapter failure rather than selected-input read denial", async () => {
+  const { path } = await fixture();
+  const provider = new PwntoolsLayoutProvider(
+    { REA_PWNTOOLS_PYTHON: process.execPath },
+    undefined,
+    () =>
+      Promise.reject(
+        Object.assign(new Error("private root denied"), { code: "EACCES" }),
+      ),
+  );
+  expect(await provider.inspect({ path })).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ProviderAdapterError",
+      diagnostics: { phase: "decoder", reason: "private root denied" },
+    },
+  });
+});
+
+it("preserves a decoder failure when private-root cleanup also fails", async () => {
+  const { path, root } = await fixture();
+  const provider = new PwntoolsLayoutProvider(
+    { REA_PWNTOOLS_PYTHON: process.execPath },
+    async (spawn) => {
+      const requestPath = spawn.arguments.at(-1);
+      if (requestPath === undefined) throw new Error("Request path missing");
+      const request = requestSchema.parse(
+        JSON.parse(await readFile(requestPath, "utf8")),
+      );
+      await writeFile(
+        request.reply_path,
+        JSON.stringify({
+          ok: false,
+          reason: "format",
+          message: "Malformed original ELF table.",
+        }),
+      );
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: ["-e", "process.exit(0)"],
+      });
+    },
+    () =>
+      Promise.resolve({
+        path: root,
+        close: () => Promise.reject(new Error("root cleanup failed")),
+      }),
+  );
+  expect(await provider.inspect({ path })).toMatchObject({
+    ok: false,
+    error: {
+      cleanupIncomplete: true,
+      cleanupResources: [root],
+      diagnostics: {
+        reason: "root cleanup failed",
+        previous_error: { category: "invalid_input" },
+      },
+    },
+  });
+});
+const fixture = async () => {
+  const workspace = await createTestWorkspace("rea-layout-boundary-");
+  const root = workspace.root;
+  onTestFinished(() => removeTestWorkspace(root));
+  const path = join(root, "selected.elf");
+  await writeFile(path, "source-owned-seam-bytes");
+  return { root, path };
+};
+
+it.each(["success", "format", "wrong-profile", "malformed-reply"])(
+  "preserves process/reply boundaries and cleans private snapshots: %s",
+  async (scenario) => {
+    const { root, path } = await fixture();
+    let ownedPath = "";
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      async (spawn) => {
+        const requestPath = spawn.arguments.at(-1);
+        if (requestPath === undefined) throw new Error("request path missing");
+        ownedPath = spawn.cwd ?? "";
+        expect(spawn.arguments[0]).toBe("-I");
+        const request = requestSchema.parse(
+          JSON.parse(await readFile(requestPath, "utf8")),
+        );
+        expect(await readFile(request.snapshot_path, "utf8")).toBe(
+          "source-owned-seam-bytes",
+        );
+        const {
+          artifact: _artifact,
+          diagnostics: _diagnostics,
+          ...value
+        } = binaryLayoutFixture(path);
+        await writeFile(
+          request.reply_path,
+          scenario === "malformed-reply"
+            ? "broken-json"
+            : JSON.stringify(
+                scenario === "format"
+                  ? {
+                      ok: false,
+                      reason: "format",
+                      message: "ELF table is truncated.",
+                    }
+                  : {
+                      ok: true,
+                      profile:
+                        scenario === "wrong-profile"
+                          ? "pwntools@other"
+                          : PWNTOOLS_PROVIDER_IDENTITY.version,
+                      value,
+                    },
+              ),
+        );
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: ["-e", "process.stderr.write('upstream warning')"],
+        });
+      },
+    );
+    const result = await provider.inspect({ path });
+    if (scenario === "success") {
+      if (!result.ok) throw result.error;
+      expect(result.value.artifact).toMatchObject({
+        path,
+        bytes: Buffer.byteLength("source-owned-seam-bytes"),
+      });
+      expect(result.value.artifact.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(result.value.diagnostics.stderr).toBe("upstream warning");
+    } else
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag:
+            scenario === "format"
+              ? "AnalysisInputError"
+              : "AnalysisOutputError",
+        },
+      });
+    expect(await readFile(path, "utf8")).toBe("source-owned-seam-bytes");
+    expect(ownedPath.startsWith(root)).toBe(false);
+    await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it("rejects missing configuration, absent input and prelaunch cancellation distinctly", async () => {
+  const { path } = await fixture();
+  expect(await new PwntoolsLayoutProvider({}).inspect({ path })).toMatchObject({
+    ok: false,
+    error: { _tag: "ProviderSelectionError", reason: "provider_unavailable" },
+  });
+  const provider = new PwntoolsLayoutProvider({
+    REA_PWNTOOLS_PYTHON: process.execPath,
+  });
+  expect(await provider.inspect({ path: path + ".absent" })).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  expect(
+    await provider.inspect({ path }, { signal: controller.signal }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+});

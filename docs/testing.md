@@ -605,3 +605,15 @@ same checks through an isolated installed package. The conditional
 compiler. Ordinary unit/static gates acquire no browser. See
 [website runtime attribution](web-runtime.md) for effects, resource bounds and
 coverage limits.
+
+### Offline binary layout
+
+`npm run verify:binary:layout` requires Linux x64, GCC/binutils, absolute
+`REA_PWNTOOLS_PYTHON` with pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2 and
+absolute `REA_VERIFY_STRACE_COMMAND`. It compiles ephemeral source-owned ELF
+fixtures and checks public CLI/MCP, lossless addresses/names, file ranges,
+mitigation inferences, malformed/unsupported input, original file hashes and
+released process ownership. Exec syscall tracing must identify only the declared
+Node/Python launchers; no target binary is executed. Core/debugger claims need
+separate verification lanes. Pass an installed package entrypoint as the script's
+first argument to verify packaging independently of the checkout.

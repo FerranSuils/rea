@@ -1,3 +1,4 @@
+import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
 import { Cli } from "incur";
 
 import { createLogger, parseLogLevel } from "./logger.js";
@@ -59,6 +60,7 @@ export const createCli = (
   registerManagedCommands(cli, logger);
   registerAndroidCommands(cli, logger, environment);
   registerFirmwareCommands(cli, logger, environment);
+  registerBinaryDiagnosticsCommands(cli, logger, environment);
   registerEvidenceCommands(cli, logger);
   registerProcessCommands(cli, logger, environment);
   registerBrowserCommands(cli, logger);

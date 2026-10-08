@@ -10,7 +10,7 @@
     "skill_version": "28"
   },
   "tools": {
-    "total": 134,
+    "total": 135,
     "families": [
       {
         "id": "direct",
@@ -84,10 +84,11 @@
       {
         "id": "native",
         "surface": "native-provider",
-        "count": 7,
+        "count": 8,
         "tools": [
           "capture_native_ui_scenario",
           "demangle_swift",
+          "inspect_binary_layout",
           "inspect_macho",
           "inspect_plist",
           "inspect_signature",
@@ -371,6 +372,12 @@
       ]
     },
     {
+      "id": "pwntools-elf",
+      "name": "REA pwntools ELF adapter",
+      "version": "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2",
+      "capabilities": ["inspect_binary_layout"]
+    },
+    {
       "id": "rea-android-application",
       "name": "REA Android application workflows",
       "version": "1",
@@ -583,7 +590,7 @@
     }
   ],
   "cli": {
-    "primary_count": 89,
+    "primary_count": 90,
     "commands": [
       "address-to-file-offset",
       "analyze",
@@ -625,6 +632,7 @@
       "inspect-android-package",
       "inspect-artifact",
       "inspect-asset-catalog",
+      "inspect-binary-layout",
       "inspect-electron-page",
       "inspect-firmware-regions",
       "inspect-keyed-archive",
@@ -684,15 +692,15 @@
   },
   "runtime_catalog": {
     "counts": {
-      "cli_commands": 89,
-      "mcp_tools": 134,
+      "cli_commands": 90,
+      "mcp_tools": 135,
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "d6f2493e9ad693a762f1bd3daf9b6736571f2a190b2a41986e045bf6ff48af89",
+      "tools_sha256": "8c749f4056ffaa11d227f5b32a4c35e6820c870de5b65a95361174c26760d591",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "e41a84b460b65f3a8d0d33498d958d249a1de81a9660c18580a0e3ab5d6941e1",
-      "providers_sha256": "e601cdceb5981ee04d6f431492f961f8867b1faa4f08ca0ecd29be2a239bc467"
+      "combined_sha256": "802c3801a6f6b1277b2ad4df21e994a3cb449584632f5c903286f86f40525bee",
+      "providers_sha256": "4dbef26df22b773954095e582a46d550a9ab08d47b11c8a5c12ffb1e0d9b2c55"
     }
   }
 }

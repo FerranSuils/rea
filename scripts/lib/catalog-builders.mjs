@@ -16,7 +16,10 @@ export const toolFamilyCatalog = (sources) => {
     {
       id: "native",
       surface: "native-provider",
-      contracts: sources.nativeContracts.NATIVE_TOOL_CONTRACTS,
+      contracts: [
+        ...sources.nativeContracts.NATIVE_TOOL_CONTRACTS,
+        ...sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+      ],
     },
     {
       id: "artifact",
@@ -142,6 +145,11 @@ export const providerCatalog = (sources) => {
     {
       identity: sources.nativeProvider.NATIVE_MACOS_PROVIDER_IDENTITY,
       contracts: sources.nativeContracts.NATIVE_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.pwntoolsProvider.PWNTOOLS_PROVIDER_IDENTITY,
+      contracts:
+        sources.binaryDiagnosticsContracts.BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
     },
     {
       identity: sources.artifactProviders.ARTIFACT_GRAPH_PROVIDER,

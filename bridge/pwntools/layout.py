@@ -1,0 +1,212 @@
+"""Offline adapter to unchanged pwntools 4.15.0; never use libs/maps/libc.
+
+Owned request/snapshot/reply paths are supplied by REA. No target execution,
+user configuration initialization, debugger startup, or dependency installation.
+"""
+import base64
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+import resource
+import sys
+
+PROFILE = "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2"
+PACKAGES = {"pwntools": "4.15.0", "pyelftools": "0.33", "unicorn": "2.1.2"}
+OUTPUT_BYTES = 64 * 1024 * 1024
+
+
+class LayoutFailure(Exception):
+    def __init__(self, reason, message):
+        super().__init__(message)
+        self.reason = reason
+
+
+def address(value):
+    return hex(int(value))
+
+
+def file_range(offset, size, length):
+    return 0 <= offset <= length and 0 <= size <= length - offset
+
+
+def location(offset, size, length):
+    if not file_range(offset, size, length):
+        raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
+    return {"offset": address(offset), "bytes": address(size)}
+
+
+def name_reference(display, section, offset, content):
+    if section is None or section.header.sh_type != "SHT_STRTAB":
+        return {"display": display, "bytes_base64": None, "location": None,
+                "unknown_reason": "Referenced string table could not be resolved."}
+    header = section.header
+    if not 0 <= offset < header.sh_size:
+        return {"display": display, "bytes_base64": None, "location": None,
+                "unknown_reason": "Reported name offset lies outside the referenced string table."}
+    start = header.sh_offset + offset
+    limit = header.sh_offset + header.sh_size
+    end = content.find(b"\0", start, limit)
+    if end < 0:
+        raise LayoutFailure("format", "ELF name lacks a terminator within its reported string table.")
+    raw = content[start:end]
+    return {"display": display, "bytes_base64": base64.b64encode(raw).decode("ascii"),
+            "location": location(start, len(raw) + 1, len(content)), "unknown_reason": None}
+
+
+def symbol_value_meaning(raw, image_type, section_count):
+    index = raw.st_shndx
+    if index == "SHN_UNDEF": return "undefined"
+    if index == "SHN_COMMON": return "alignment"
+    if index == "SHN_ABS": return "absolute-value"
+    if raw.st_info.type == "STT_FILE": return "no-address"
+    if not isinstance(index, int) or not 0 < index < section_count or index >= 0xff00:
+        return "unknown-section-index"
+    if image_type == "ET_REL": return "section-offset"
+    if raw.st_info.type == "STT_TLS": return "tls-offset"
+    return "linked-virtual-address"
+
+
+def inspect_elf(path, cache):
+    for package, expected in PACKAGES.items():
+        try:
+            version = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError as error:
+            raise LayoutFailure("unavailable", "Selected Python lacks " + package + " " + expected + ".") from error
+        if version != expected:
+            raise LayoutFailure("unsupported", "Expected " + package + " " + expected + "; selected Python reports " + version + ".")
+    content = path.read_bytes()
+    if len(content) < 4 or content[:4] != b"\x7fELF":
+        raise LayoutFailure("format", "Selected object does not contain an ELF header.")
+    if len(content) < 16:
+        raise LayoutFailure("format", "Selected ELF identification is truncated.")
+    if content[4] != 2 or content[5] != 1:
+        raise LayoutFailure("unsupported", "Initial layout profile requires ELF64 little-endian objects.")
+    if len(content) < 64:
+        raise LayoutFailure("format", "Selected ELF64 header is truncated.")
+    if int.from_bytes(content[18:20], "little") != 62:
+        raise LayoutFailure("unsupported", "Initial layout profile requires x86-64 ELF objects.")
+    if int.from_bytes(content[16:18], "little") not in (1, 2, 3):
+        raise LayoutFailure("unsupported", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
+    from pwnlib.context import context
+    with context.local(cache_dir=str(cache), log_level="warning"):
+        from elftools.common.exceptions import ELFError
+        from pwnlib.elf import ELF
+        try:
+            image = ELF(str(path), checksec=False)
+            if image.arch != "amd64" or image.bits != 64 or image.endian != "little":
+                raise LayoutFailure("unsupported", "Initial layout profile requires x86-64 ELF64 little-endian objects.")
+            if image.header.e_type not in ("ET_EXEC", "ET_DYN", "ET_REL"):
+                raise LayoutFailure("unsupported", "Selected ELF type is outside the EXEC/DYN/REL layout profile; recorded core analysis is separate.")
+            length = len(content)
+            all_sections = list(image.iter_sections())
+            shstrings = image.get_section(image.get_shstrndx()) if all_sections else None
+            sections, segments, symbols, relocations = [], [], [], []
+            needed, interpreters = [], []
+            for index, section in enumerate(all_sections):
+                h = section.header
+                backing = h.sh_type not in ("SHT_NOBITS", "SHT_NULL")
+                if backing: location(h.sh_offset, h.sh_size, length)
+                sections.append({
+                    "index": index, "name": name_reference(section.name, shstrings, h.sh_name, content), "name_offset": address(h.sh_name), "type": h.sh_type,
+                    "header_location": location(image.header.e_shoff + index * image.header.e_shentsize, image.header.e_shentsize, length),
+                    "address": address(h.sh_addr), "offset": address(h.sh_offset),
+                    "size": address(h.sh_size), "alignment": address(h.sh_addralign),
+                    "flags": address(h.sh_flags), "link": h.sh_link, "info": h.sh_info,
+                    "entry_size": address(h.sh_entsize), "file_backing": "file" if backing else "none",
+                })
+                if h.sh_type in ("SHT_SYMTAB", "SHT_DYNSYM"):
+                    strings = all_sections[h.sh_link] if h.sh_link < len(all_sections) else None
+                    for entry, symbol in enumerate(section.iter_symbols()):
+                        raw = symbol.entry
+                        symbols.append({
+                            "table_index": index, "entry_index": entry,
+                            "name": name_reference(symbol.name, strings, raw.st_name, content), "name_offset": address(raw.st_name),
+                            "location": location(h.sh_offset + entry * h.sh_entsize, h.sh_entsize, length),
+                            "value": address(raw.st_value), "value_meaning": symbol_value_meaning(raw, image.header.e_type, len(all_sections)),
+                            "size": address(raw.st_size), "binding": raw.st_info.bind, "type": raw.st_info.type,
+                            "visibility": raw.st_other.visibility, "section_index": raw.st_shndx,
+                        })
+                if h.sh_type in ("SHT_REL", "SHT_RELA"):
+                    for entry, relocation in enumerate(section.iter_relocations()):
+                        raw = relocation.entry
+                        relocations.append({
+                            "section_index": index, "entry_index": entry, "reported_offset": address(raw.r_offset),
+                            "target": {"kind": "section-offset", "section_index": h.sh_info, "offset": address(raw.r_offset)} if image.header.e_type == "ET_REL" else {"kind": "linked-virtual-address", "address": address(raw.r_offset)},
+                            "location": location(h.sh_offset + entry * h.sh_entsize, h.sh_entsize, length),
+                            "type": raw.r_info_type, "symbol_table_index": h.sh_link, "symbol_index": raw.r_info_sym,
+                            "addend": None if "r_addend" not in raw else str(raw.r_addend),
+                        })
+            for index, segment in enumerate(image.iter_segments()):
+                h = segment.header
+                location(h.p_offset, h.p_filesz, length)
+                if h.p_type == "PT_LOAD" and h.p_memsz < h.p_filesz:
+                    raise LayoutFailure("format", "ELF load segment memory size is smaller than its file size.")
+                segments.append({
+                    "index": index, "type": h.p_type, "offset": address(h.p_offset),
+                    "header_location": location(image.header.e_phoff + index * image.header.e_phentsize, image.header.e_phentsize, length),
+                    "file_size": address(h.p_filesz), "memory_size": address(h.p_memsz),
+                    "virtual_address": address(h.p_vaddr), "physical_address": address(h.p_paddr),
+                    "alignment": address(h.p_align), "flags": address(h.p_flags),
+                    "permissions": {"read": bool(h.p_flags & 4), "write": bool(h.p_flags & 2), "execute": bool(h.p_flags & 1)},
+                })
+                if h.p_type == "PT_DYNAMIC":
+                    string_table = segment._get_stringtable()
+                    for tag in segment.iter_tags():
+                        if tag.entry.d_tag == "DT_NEEDED":
+                            needed.append(name_reference(tag.needed, string_table, tag.entry.d_val, content))
+                if h.p_type == "PT_INTERP":
+                    raw = content[h.p_offset:h.p_offset + h.p_filesz]
+                    if not raw or raw[-1:] != b"\0":
+                        raise LayoutFailure("format", "ELF interpreter lacks a reported terminator.")
+                    interpreters.append({"display": segment.get_interp_name(), "bytes_base64": base64.b64encode(raw[:-1]).decode("ascii"), "location": location(h.p_offset, h.p_filesz, length), "unknown_reason": None})
+            return {
+                "format": "elf", "architecture": {"machine": image.header.e_machine, "bits": image.bits, "byte_order": image.endian},
+                "image_type": image.header.e_type,
+                "entry_point": {"reported_value": address(image.header.e_entry), "meaning": "not-applicable" if image.header.e_type == "ET_REL" else "linked-virtual-address", "execution_status": "unknown"},
+                "runtime_load_base": None, "sections": sections, "segments": segments, "symbols": symbols, "relocations": relocations,
+                "linkage": {"needed_libraries": needed, "interpreters": interpreters,
+                    "got": [{"display_name": name, "address": address(value)} for name, value in image.got.items()],
+                    "plt": [{"display_name": name, "address": address(value)} for name, value in image.plt.items()],
+                    "convenience_maps_completeness": "unknown", "runtime_library_paths": None},
+                "mitigations": {"evidence_kind": "inferred", "position_independent": image.pie, "nx_indicator": image.nx, "executable_stack_indicator": image.execstack, "stack_canary_indicator": image.canary, "relro": image.relro},
+                "limitations": [
+                    "Reported values preserve linked addresses, section offsets, TLS offsets, alignment and absolute values separately. Runtime load base and library paths are unknown.",
+                    "Names are display strings plus raw bytes and file ranges where resolvable; section/table/entry indices preserve identity and duplicates. Name ranges include their terminating NUL; raw name bytes exclude it.",
+                    "GOT/PLT are derived upstream convenience maps; aliases may collapse and warnings may indicate incomplete coverage. Their completeness is unknown.",
+                    "Mitigations are upstream static heuristics, not runtime protection. ET_DYN does not prove an executable; absent canary symbols do not prove every function unprotected.",
+                    "This profile inspects ELF EXEC/DYN/REL layout only. It does not analyze recorded cores, resolve loaded libraries, execute the target or start a debugger.",
+                ],
+            }
+        except LayoutFailure:
+            raise
+        except (ELFError, ValueError, AssertionError, IndexError) as error:
+            raise LayoutFailure("format", "Selected ELF failed unchanged upstream structural parsing: " + str(error)) from error
+
+
+def main(request_path):
+    request = json.loads(Path(request_path).read_text(encoding="utf-8"))
+    resource.setrlimit(resource.RLIMIT_AS, (3 * 1024**3, 3 * 1024**3))
+    resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (OUTPUT_BYTES, OUTPUT_BYTES))
+    os.environ["PWNLIB_NOTERM"] = "1"
+    os.environ["PWNLIB_CACHE_DIR"] = str(Path(request_path).parent / "cache")
+    try:
+        value = inspect_elf(Path(request["snapshot_path"]), Path(request_path).parent / "cache")
+        reply = {"ok": True, "profile": PROFILE, "value": value}
+    except LayoutFailure as error:
+        reply = {"ok": False, "reason": error.reason, "message": str(error)}
+    except MemoryError:
+        reply = {"ok": False, "reason": "resource-limit", "message": "pwntools exceeded its 3 GiB virtual address-space budget."}
+    except Exception as error:
+        reply = {"ok": False, "reason": "decoder", "message": type(error).__name__ + ": " + str(error)}
+    encoded = json.dumps(reply, ensure_ascii=True, allow_nan=False).encode("utf-8")
+    if len(encoded) > OUTPUT_BYTES:
+        encoded = json.dumps({"ok": False, "reason": "output-limit", "message": "Complete ELF layout exceeds the 64 MiB reply budget."}).encode("utf-8")
+    descriptor = os.open(request["reply_path"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(encoded)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1])
