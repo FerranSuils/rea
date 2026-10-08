@@ -99,6 +99,7 @@ it.each(["different-path", "invalid-digest", "outside-range"])(
         type: "PT_LOAD",
         offset: "0x80",
         header_location: { offset: "0x0", bytes: "0x38" },
+        file_backing: "file",
         file_size: "0x1",
         memory_size: "0x1",
         virtual_address: "0x20000000000001",

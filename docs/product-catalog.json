@@ -697,9 +697,9 @@
       "mcp_prompts": 6
     },
     "digests": {
-      "tools_sha256": "8c749f4056ffaa11d227f5b32a4c35e6820c870de5b65a95361174c26760d591",
+      "tools_sha256": "6c88881815f80e7794b83338585adf7288da360dc33ee2d19c6e2eb66d61a0cb",
       "prompts_sha256": "ef2de8814390b340623c32001610aa2709d90bed51537b6e562ab3abf144ab4d",
-      "combined_sha256": "802c3801a6f6b1277b2ad4df21e994a3cb449584632f5c903286f86f40525bee",
+      "combined_sha256": "2a7ffb817536ed43c201f7ca2614332531d2d90c84c70b4eee39852d8352aacc",
       "providers_sha256": "4dbef26df22b773954095e582a46d550a9ab08d47b11c8a5c12ffb1e0d9b2c55"
     }
   }

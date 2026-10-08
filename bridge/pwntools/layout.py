@@ -173,7 +173,8 @@ def inspect_elf(path, cache):
                         })
             for index, segment in enumerate(image.iter_segments()):
                 h = segment.header
-                location(h.p_offset, h.p_filesz, length)
+                backing = h.p_type != "PT_NULL" and h.p_filesz != 0
+                if backing: location(h.p_offset, h.p_filesz, length)
                 if h.p_type == "PT_LOAD" and h.p_memsz < h.p_filesz:
                     raise LayoutFailure("format", "ELF load segment memory size is smaller than its file size.")
                 segments.append({
@@ -182,7 +183,8 @@ def inspect_elf(path, cache):
                     "file_size": address(h.p_filesz), "memory_size": address(h.p_memsz),
                     "virtual_address": address(h.p_vaddr), "physical_address": address(h.p_paddr),
                     "alignment": address(h.p_align), "flags": address(h.p_flags),
-                    "permissions": {"read": bool(h.p_flags & 4), "write": bool(h.p_flags & 2), "execute": bool(h.p_flags & 1)},
+                    "file_backing": "file" if backing else "none",
+                    "permissions": None if h.p_type == "PT_NULL" else {"read": bool(h.p_flags & 4), "write": bool(h.p_flags & 2), "execute": bool(h.p_flags & 1)},
                 })
                 if h.p_type == "PT_DYNAMIC":
                     string_table = segment._get_stringtable()
@@ -206,6 +208,8 @@ def inspect_elf(path, cache):
                     "convenience_maps_completeness": "unknown", "runtime_library_paths": None},
                 "mitigations": {"evidence_kind": "inferred", "position_independent": image.pie, "nx_indicator": image.nx, "executable_stack_indicator": image.execstack, "stack_canary_indicator": image.canary, "relro": image.relro},
                 "limitations": [
+                    "PT_NULL payload fields are unused and retain their reported numbers without file-byte or permission claims. Zero-file-size segments provide no file bytes.",
+                    "SHN_XINDEX symbol values remain unresolved in this upstream representation; an external index table does not establish a resolved index in this report.",
                     "Reported values preserve linked addresses, section offsets, TLS offsets, alignment and absolute values separately. Runtime load base and library paths are unknown.",
                     "Names are display strings plus raw bytes and file ranges where resolvable; section/table/entry indices preserve identity and duplicates. Name ranges include their terminating NUL; raw name bytes exclude it.",
                     "GOT/PLT are derived upstream convenience maps; aliases may collapse and warnings may indicate incomplete coverage. Their completeness is unknown.",
@@ -221,20 +225,36 @@ def inspect_elf(path, cache):
             raise LayoutFailure("format", "Selected ELF failed unchanged upstream structural parsing: " + str(error)) from error
 
 
+def lower_resource_limits():
+    limits = {}
+    for name, kind, maximum in (
+        ("address_space_bytes", resource.RLIMIT_AS, 3 * 1024**3),
+        ("cpu_seconds", resource.RLIMIT_CPU, 30),
+        ("file_size_bytes", resource.RLIMIT_FSIZE, OUTPUT_BYTES),
+    ):
+        soft, hard = resource.getrlimit(kind)
+        finite = [maximum] + [value for value in (soft, hard) if value != resource.RLIM_INFINITY]
+        effective = min(finite)
+        # Preserve the inherited hard boundary and never raise a caller's soft limit.
+        resource.setrlimit(kind, (effective, hard))
+        limits[name] = effective
+    return limits
+
+
 def main(request_path):
     request = json.loads(Path(request_path).read_text(encoding="utf-8"))
-    resource.setrlimit(resource.RLIMIT_AS, (3 * 1024**3, 3 * 1024**3))
-    resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (OUTPUT_BYTES, OUTPUT_BYTES))
     os.environ["PWNLIB_NOTERM"] = "1"
     os.environ["PWNLIB_CACHE_DIR"] = str(Path(request_path).parent / "cache")
+    limits = None
     try:
+        limits = lower_resource_limits()
         value = inspect_elf(Path(request["snapshot_path"]), Path(request_path).parent / "cache")
+        value["limitations"].append("Effective owned Python resource soft limits: " + json.dumps(limits, sort_keys=True) + ". Inherited tighter limits are retained.")
         reply = {"ok": True, "profile": PROFILE, "value": value}
     except LayoutFailure as error:
         reply = {"ok": False, "reason": error.reason, "message": str(error)}
     except MemoryError:
-        reply = {"ok": False, "reason": "resource-limit", "message": "pwntools exceeded its 3 GiB virtual address-space budget."}
+        reply = {"ok": False, "reason": "resource-limit", "message": "pwntools exceeded its effective address-space budget: " + str(limits)}
     except Exception as error:
         reply = {"ok": False, "reason": "decoder", "message": type(error).__name__ + ": " + str(error)}
     encoded = json.dumps(reply, ensure_ascii=True, allow_nan=False).encode("utf-8")

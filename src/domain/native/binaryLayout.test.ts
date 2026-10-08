@@ -85,3 +85,54 @@ it.each([
   if (problem === "noncanonical-base64") section.name.bytes_base64 = "AR==";
   expect(binaryLayoutSchema.safeParse(value).success).toBe(false);
 });
+
+it.each([
+  ["PT_NULL", "0xffffffffffffffff", "none", null, true],
+  ["PT_LOAD", "0x0", "none", { read: true, write: true, execute: false }, true],
+  [
+    "PT_LOAD",
+    "0x1",
+    "file",
+    { read: true, write: false, execute: false },
+    false,
+  ],
+  ["PT_NULL", "0x1", "file", null, false],
+  [
+    "PT_NULL",
+    "0x1",
+    "none",
+    { read: false, write: false, execute: false },
+    false,
+  ],
+  [
+    "PT_LOAD",
+    "0x1",
+    "none",
+    { read: true, write: false, execute: false },
+    false,
+  ],
+])(
+  "validates actual segment backing/meaning for %s size %s",
+  (type, fileSize, backing, permissions, valid) => {
+    const value = {
+      ...report(),
+      segments: [
+        {
+          index: 0,
+          type,
+          header_location: { offset: "0x0", bytes: "0x38" },
+          offset: "0xffffffffffffffff",
+          file_size: fileSize,
+          memory_size: fileSize,
+          virtual_address: "0x0",
+          physical_address: "0x0",
+          alignment: "0x0",
+          flags: "0x0",
+          file_backing: backing,
+          permissions,
+        },
+      ],
+    };
+    expect(binaryLayoutSchema.safeParse(value).success).toBe(valid);
+  },
+);

@@ -38,14 +38,17 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
 - Each symbol retains its table and entry index. Its reported value can mean
   undefined, alignment, absolute value, no address, unknown section index,
   section offset, TLS offset or linked virtual address. Duplicate names remain
-  separate entries.
+  separate entries. SHN_XINDEX remains unresolved in the selected upstream
+  representation; its external index table is not silently treated as resolved.
 - Relocatable objects have section-relative relocations and no executable entry
   claim. Signed relocation addends are decimal strings.
 - Name display strings may contain upstream replacement characters. Raw name
   bytes and string-table ranges retain observed identity where resolvable;
   ranges include the terminating NUL and base64 bytes exclude it.
 - NOBITS and NULL sections provide no file bytes. Reported file-backed ranges
-  are checked against snapshot size again at the public boundary.
+  are checked against snapshot size again at the public boundary. PT_NULL payload
+  fields are unused: reported numbers remain, file backing is none and interpreted
+  permissions are null. Segments with zero file size also have no file bytes.
 - Sectionless dynamic images still report dependency names with raw bytes and
   file locations where uniquely mapped. Missing symbol/relocation section tables
   do not establish that those runtime tables are absent.
@@ -60,8 +63,9 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
   library, and an absent canary symbol does not prove every function unprotected.
 
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
-and 30-second owned command deadline. Python has 3 GiB virtual address space,
-30 CPU seconds and 64 MiB file output limits. Virtual address space is not RSS;
+and 30-second owned command deadline. Python lowers resource soft limits to at most 3 GiB virtual address space,
+30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
+retained, and the effective values are returned in the result limitations. Virtual address space is not RSS;
 Unicorn needs a large virtual map. Limits fail with no partial success, and
 owned process/root cleanup completes independently of cancellation.
 

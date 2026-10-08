@@ -26,7 +26,7 @@ if (
   );
 const run = createVerifierRun();
 const execute = promisify(execFile);
-for (const command of ["gcc", "ld", "strip", strace]) {
+for (const command of ["gcc", "ld", "strip", "/usr/bin/prlimit", strace]) {
   try {
     await execute(command, [command === strace ? "-V" : "--version"], {
       timeout: 10_000,
@@ -97,6 +97,28 @@ try {
   sectionlessBytes.writeUInt16LE(0, 60);
   sectionlessBytes.writeUInt16LE(0, 62);
   await writeFile(join(root.path, "sectionless"), sectionlessBytes);
+  const nullBytes = Buffer.from(await readFile(join(root.path, "protected")));
+  const phOffset = Number(nullBytes.readBigUInt64LE(32));
+  const phSize = nullBytes.readUInt16LE(54);
+  const phCount = nullBytes.readUInt16LE(56);
+  const unusedIndex = Array.from({ length: phCount }, (_, index) => index).find(
+    (index) => nullBytes.readUInt32LE(phOffset + index * phSize) === 0x6474e551,
+  );
+  assert.notEqual(
+    unusedIndex,
+    undefined,
+    "Required stack fixture header absent",
+  );
+  const unusedHeader = phOffset + unusedIndex * phSize;
+  nullBytes.writeUInt32LE(0, unusedHeader);
+  for (const field of [8, 32, 40])
+    nullBytes.writeBigUInt64LE(0xffffffffffffffffn, unusedHeader + field);
+  await writeFile(join(root.path, "unused-segment"), nullBytes);
+  const emptyBytes = Buffer.from(nullBytes);
+  emptyBytes.writeUInt32LE(1, unusedHeader);
+  emptyBytes.writeBigUInt64LE(0n, unusedHeader + 32);
+  emptyBytes.writeBigUInt64LE(0n, unusedHeader + 40);
+  await writeFile(join(root.path, "empty-segment"), emptyBytes);
   await copyFile(join(root.path, "protected"), join(root.path, "stripped"));
   await execute("strip", ["--strip-all", join(root.path, "stripped")], {
     timeout: 10_000,
@@ -123,6 +145,8 @@ try {
     "library",
     "stripped",
     "sectionless",
+    "unused-segment",
+    "empty-segment",
     "high",
   ]) {
     const path = join(root.path, name);
@@ -166,6 +190,13 @@ try {
             BigInt(section.offset) + BigInt(section.size) <=
               BigInt(bytes.length),
           );
+      }
+      if (name === "unused-segment" || name === "empty-segment") {
+        const segment = value.segments[unusedIndex];
+        assert.equal(segment.file_backing, "none");
+        assert.equal(segment.offset, "0xffffffffffffffff");
+        if (name === "unused-segment") assert.equal(segment.permissions, null);
+        else assert.notEqual(segment.permissions, null);
       }
       reports.set(name, value);
       assert.deepEqual(await readFile(path), bytes);
@@ -267,6 +298,108 @@ try {
     );
     return [`zero-entry-${type}`, bytes, "invalid_input"];
   });
+  const symbolTable = relocatable.sections.find(
+    (section) => section.type === "SHT_SYMTAB",
+  );
+  assert.notEqual(symbolTable, undefined);
+  const symbol = relocatable.symbols.find(
+    (item) => item.name.display === "read_values",
+  );
+  assert.notEqual(symbol, undefined);
+  const extendedWords = Buffer.alloc(
+    Number(BigInt(symbolTable.size) / BigInt(symbolTable.entry_size)) * 4,
+  );
+  extendedWords.writeUInt32LE(symbol.section_index, symbol.entry_index * 4);
+  const headers = Buffer.from(
+    object.subarray(
+      Number(BigInt(relocatable.sections[0].header_location.offset)),
+      Number(
+        BigInt(relocatable.sections.at(-1).header_location.offset) +
+          BigInt(relocatable.sections.at(-1).header_location.bytes),
+      ),
+    ),
+  );
+  const extendedHeader = Buffer.alloc(64);
+  extendedHeader.writeUInt32LE(18, 4); // SHT_SYMTAB_SHNDX
+  extendedHeader.writeBigUInt64LE(BigInt(object.length), 24);
+  extendedHeader.writeBigUInt64LE(BigInt(extendedWords.length), 32);
+  extendedHeader.writeUInt32LE(symbolTable.index, 40);
+  extendedHeader.writeBigUInt64LE(4n, 48);
+  extendedHeader.writeBigUInt64LE(4n, 56);
+  const extendedObject = Buffer.concat([
+    object,
+    extendedWords,
+    headers,
+    extendedHeader,
+  ]);
+  extendedObject.writeBigUInt64LE(
+    BigInt(object.length + extendedWords.length),
+    40,
+  );
+  extendedObject.writeUInt16LE(relocatable.sections.length + 1, 60);
+  extendedObject.writeUInt16LE(
+    0xffff,
+    Number(BigInt(symbol.location.offset)) + 6,
+  );
+  const extendedPath = join(root.path, "external-symbol-index.o");
+  await writeFile(extendedPath, extendedObject);
+  for (const mode of ["cli", "mcp"]) {
+    const value = await inspect(mode, extendedPath);
+    const reported = value.symbols.find(
+      (item) => item.name.display === "read_values",
+    );
+    assert.equal(reported.section_index, 0xffff);
+    assert.equal(reported.value_meaning, "unknown-section-index");
+    assert.ok(
+      value.sections.some((section) => section.type === "SHT_SYMTAB_SHNDX"),
+    );
+    assert.deepEqual(await readFile(extendedPath), extendedObject);
+    cases++;
+  }
+  for (const [name, option, expected] of [
+    ["address-space", "--as=2147483648", '"address_space_bytes": 2147483648'],
+    ["cpu", "--cpu=20", '"cpu_seconds": 20'],
+    ["file-size", "--fsize=33554432", '"file_size_bytes": 33554432'],
+  ]) {
+    const wrapper = join(root.path, `python-limit-${name}`);
+    const quotedPython = "'" + python.replaceAll("'", "'\"'\"'") + "'";
+    await writeFile(
+      wrapper,
+      `#!/bin/sh\nexec /usr/bin/prlimit ${option} -- ${quotedPython} "$@"\n`,
+      { mode: 0o700 },
+    );
+    const limitedEnvironment = { ...environment, REA_PWNTOOLS_PYTHON: wrapper };
+    const limitedClient = new Client({
+      name: "limited-layout-verifier",
+      version: "1",
+    });
+    const limitedTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [entrypoint, "mcp"],
+      env: limitedEnvironment,
+      stderr: "pipe",
+    });
+    try {
+      await limitedClient.connect(limitedTransport);
+      for (const mode of ["cli", "mcp"]) {
+        const value = await inspect(
+          mode,
+          join(root.path, "protected"),
+          undefined,
+          limitedEnvironment,
+          limitedClient,
+        );
+        assert.ok(value.limitations.some((item) => item.includes(expected)));
+        cases++;
+      }
+    } finally {
+      try {
+        await limitedClient.close();
+      } finally {
+        await limitedTransport.close();
+      }
+    }
+  }
   const unsupported = Buffer.from(object);
   unsupported.writeUInt16LE(183, 18);
   const core = Buffer.from(object);
@@ -399,10 +532,16 @@ console.log(
   ),
 );
 
-async function inspect(mode, path, category) {
+async function inspect(
+  mode,
+  path,
+  category,
+  selectedEnvironment = environment,
+  selectedClient = client,
+) {
   let envelope;
   if (mode === "mcp") {
-    const response = await client.callTool({
+    const response = await selectedClient.callTool({
       name: "inspect_binary_layout",
       arguments: { path },
     });
@@ -420,7 +559,11 @@ async function inspect(mode, path, category) {
       const response = await execute(
         process.execPath,
         [entrypoint, "inspect-binary-layout", path, "--json"],
-        { env: environment, timeout: 40_000, maxBuffer: 64 * 1024 * 1024 },
+        {
+          env: selectedEnvironment,
+          timeout: 40_000,
+          maxBuffer: 64 * 1024 * 1024,
+        },
       );
       assert.equal(category, undefined, "Expected selected input to fail");
       envelope = JSON.parse(response.stdout);

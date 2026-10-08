@@ -74,11 +74,14 @@ const binaryLayoutObjectSchema = z.strictObject({
       physical_address: unsignedHex,
       alignment: unsignedHex,
       flags: unsignedHex,
-      permissions: z.strictObject({
-        read: z.boolean(),
-        write: z.boolean(),
-        execute: z.boolean(),
-      }),
+      file_backing: z.enum(["file", "none"]),
+      permissions: z
+        .strictObject({
+          read: z.boolean(),
+          write: z.boolean(),
+          execute: z.boolean(),
+        })
+        .nullable(),
     }),
   ),
   symbols: z.array(
@@ -222,7 +225,24 @@ export const binaryLayoutSchema = binaryLayoutObjectSchema.superRefine(
         index,
         "header_location",
       ]);
-      check(segment.offset, segment.file_size, ["segments", index]);
+      const hasFileBytes =
+        segment.type !== "PT_NULL" && BigInt(segment.file_size) !== 0n;
+      if (segment.file_backing !== (hasFileBytes ? "file" : "none"))
+        context.addIssue({
+          code: "custom",
+          path: ["segments", index, "file_backing"],
+          message:
+            "File backing must follow the reported segment type and file size.",
+        });
+      if ((segment.type === "PT_NULL") !== (segment.permissions === null))
+        context.addIssue({
+          code: "custom",
+          path: ["segments", index, "permissions"],
+          message:
+            "Unused PT_NULL flags have no permission meaning; other segment flags retain their interpretation.",
+        });
+      if (hasFileBytes)
+        check(segment.offset, segment.file_size, ["segments", index]);
     }
     for (const [index, symbol] of value.symbols.entries()) {
       checkLocation(symbol.location, ["symbols", index, "location"]);
