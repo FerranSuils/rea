@@ -104,6 +104,29 @@ For native analysis, configure a provider first. See the
 [CLI and Evidence guide](docs/cli.md) for native commands, provider selection,
 snapshots and scripting.
 
+### Update REA
+
+REA changes quickly, and new releases include frequent bug fixes. Keep your
+installation up to date.
+
+For an npm-installed CLI:
+
+```bash
+rea update
+```
+
+To refresh your agent registrations and skill, run the setup command printed
+by the update.
+
+If you use `npx`, update your agent setup with:
+
+```bash
+npx rea-agents@latest setup
+```
+
+Review the setup changes and restart your agent. For one-off CLI commands,
+use `npx rea-agents@latest` followed by the command.
+
 ## How REA works
 
 Your agent calls REA through MCP to inspect the target and trace relevant code.
@@ -175,40 +198,81 @@ your question, how REA helped, and what you found.
 
 ## FAQ
 
-### Which agents can use REA?
+<details>
+<summary><strong>Which agents can use REA?</strong></summary>
 
 Any agent that supports local MCP servers. Setup configures the
 [supported agents](docs/installation.md#supported-agents); other clients can use
 [manual MCP registration](docs/installation.md#mcp-registry).
 
-### Do I need Hopper, Ghidra or IDA?
+</details>
+
+<details>
+<summary><strong>Do I need Hopper, Ghidra or IDA?</strong></summary>
 
 Deep native analysis uses one of them. Static JavaScript and .NET inspection
 work without a native analysis engine. Setup can install Hopper after approval;
 Ghidra and IDA use your existing installations. See [provider setup](docs/installation.md#hopper).
 
-### Do I need to start Hopper first?
+</details>
+
+<details>
+<summary><strong>Do I need to start Hopper first?</strong></summary>
 
 REA starts Hopper when an operation needs it. On macOS, a first-run dialog may
 ask you to choose demo mode or activate your license. See
 [Hopper startup and troubleshooting](docs/installation.md#launcher-paths-and-troubleshooting).
 
-### What does installing the skill from skills.sh do?
+</details>
+
+<details>
+<summary><strong>What does installing the skill from skills.sh do?</strong></summary>
 
 The skill supplies investigation instructions for your agent. Use `rea setup`
 to register REA's MCP server and install the matching instructions, then restart
 your agent. See [skill-only installation](docs/installation.md#skill-only-installation).
 
-### What code does REA return?
+</details>
+
+<details>
+<summary><strong>What code does REA return?</strong></summary>
 
 Native analysis returns pseudocode and assembly. JavaScript/Electron analysis
 recovers modules and their relationships. Your agent uses these findings to
 write and test an implementation; the [showcases](#showcases) give worked examples.
 
-### Does REA upload my app?
+</details>
+
+<details>
+<summary><strong>Does REA upload my app?</strong></summary>
 
 REA analyzes targets locally. Your agent receives the tool results, and its
 model provider has its own data policy.
+
+</details>
+
+<details>
+<summary><strong>What should I do if I hit a bug?</strong></summary>
+
+Update first; a recent release may already fix it.
+
+For an npm-installed CLI:
+
+```bash
+rea update
+```
+
+For agent setup through `npx`:
+
+```bash
+npx rea-agents@latest setup
+```
+
+If you're using an agent, complete the [setup refresh](#update-rea) and restart
+it. Retry the same task. If the problem persists, [open an issue](https://github.com/morluto/rea/issues)
+with your REA version, target type, steps to reproduce and error output.
+
+</details>
 
 ## Documentation
 
