@@ -14,7 +14,8 @@ Original upstream code/licenses remain in the caller-selected environment.
 No target or core binaries are committed. Fixtures are compiled in owned
 temporary storage from repository source and are never executed.
 
-`bridge/pwntools/layout.py` is only an adapter. It reads original tables through
+`bridge/pwntools/layout.py` is an owned allocation-failure bootstrap;
+`layout_impl.py` is the adapter. It reads original tables through
 unchanged upstream APIs, preserves raw name bytes/ranges, and serializes uint64
 values as strings. It never accesses `ELF.libs`, `ELF.maps`, `ELF.libc` or
 `process.corefile`, which have materially different execution authority.

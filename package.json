@@ -64,6 +64,7 @@
     "native/windows/build/rea-windows-x64.node",
     "scripts/verify-windows-native-artifact.mjs",
     "bridge/pwntools/layout.py",
+    "bridge/pwntools/layout_impl.py",
     "third_party/pwntools/README.md"
   ],
   "scripts": {

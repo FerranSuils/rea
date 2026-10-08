@@ -2,7 +2,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -61,8 +67,38 @@ const highSource = fileURLToPath(
   new URL("./fixtures/binary-layout-high.S", import.meta.url),
 );
 let cases = 0;
+let bootstrapCases = 0;
 const failures = [];
 try {
+  const bootstrapRoot = join(root.path, "bootstrap-boundary");
+  await mkdir(bootstrapRoot);
+  const bootstrapPath = join(bootstrapRoot, "layout.py");
+  await copyFile(
+    join(dirname(dirname(entrypoint)), "bridge/pwntools/layout.py"),
+    bootstrapPath,
+  );
+  for (const [source, status] of [
+    ["raise MemoryError('source-owned initialization failure')", 75],
+    ["raise OSError(12, 'source-owned allocation failure')", 75],
+    [
+      "raise OSError(2, 'MemoryError-like text is not an allocation failure')",
+      1,
+    ],
+  ]) {
+    await writeFile(join(bootstrapRoot, "layout_impl.py"), source);
+    let exitCode = 0;
+    try {
+      await execute(python, ["-I", bootstrapPath, "unused-request"], {
+        timeout: 10000,
+        maxBuffer: 1024 * 1024,
+      });
+    } catch (cause) {
+      assert.equal(typeof cause.code, "number");
+      exitCode = cause.code;
+    }
+    assert.equal(exitCode, status);
+    bootstrapCases++;
+  }
   for (const [name, flags] of [
     [
       "protected",
@@ -704,6 +740,7 @@ console.log(
     {
       status: "passed",
       public_cases: cases,
+      bootstrap_boundary_cases: bootstrapCases,
       profile: "pwntools4.15.0/pyelftools0.33/Unicorn2.1.2",
       target_execution: "exec-syscalls-verified-absent",
       verifier,
