@@ -1,6 +1,7 @@
 import {
   pwntoolsLayoutFailure,
   pwntoolsUnavailable,
+  capturedPwntoolsOutput,
 } from "./PwntoolsFailures.js";
 import { randomUUID } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
@@ -142,6 +143,7 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
           ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
         },
       );
+      const capturedOutput = capturedPwntoolsOutput(execution);
       let reply: z.output<typeof replySchema>;
       try {
         const file = await readStableArtifact(
@@ -152,16 +154,16 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
         reply = replySchema.parse(JSON.parse(file.bytes.toString("utf8")));
       } catch (cause: unknown) {
         if (options?.signal?.aborted)
-          throw new AnalysisCancelledError(OPERATION);
+          throw new AnalysisCancelledError(OPERATION, { capturedOutput });
         throw new AnalysisOutputError(
           OPERATION,
           `Owned ELF decoder reply failed for ${input.path}: ${cause instanceof z.ZodError ? cause.issues[0]?.message + " at " + (cause.issues[0]?.path.map(String).join(".") ?? "root") : cause instanceof Error ? cause.message : String(cause)}`,
-          { cause },
+          { cause, capturedOutput },
         );
       }
       if (!reply.ok) {
         if (reply.reason === "format")
-          throw new AnalysisInputError(OPERATION, undefined, [
+          throw new AnalysisInputError(OPERATION, { capturedOutput }, [
             {
               path: ["path"],
               reason: "invalid_format",
@@ -172,16 +174,20 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
           throw pwntoolsUnavailable(
             reply.message,
             this.environment.REA_PWNTOOLS_PYTHON ?? "",
+            undefined,
+            capturedOutput,
           );
         if (reply.reason === "unsupported")
           throw new AnalysisCapabilityUnavailableError(
             this.identity.id,
             OPERATION,
             reply.message,
-            { userMessage: reply.message },
+            { userMessage: reply.message, capturedOutput },
           );
         if (reply.reason === "output-limit")
-          throw new AnalysisOutputError(OPERATION, reply.message);
+          throw new AnalysisOutputError(OPERATION, reply.message, {
+            capturedOutput,
+          });
         throw new ProviderAdapterError(this.identity.id, OPERATION, {
           diagnostics: {
             phase,
@@ -226,6 +232,15 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
               previous_error: result.ok
                 ? null
                 : projectAnalysisError(result.error),
+              ...(result.ok
+                ? {
+                    captured_output: {
+                      stdout: result.value.diagnostics.stdout,
+                      stderr: result.value.diagnostics.stderr,
+                      truncated: false,
+                    },
+                  }
+                : {}),
             },
             { operation: OPERATION },
           ),
@@ -233,7 +248,15 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
       }
     }
     return result.ok && options?.signal?.aborted
-      ? err(new AnalysisCancelledError(OPERATION))
+      ? err(
+          new AnalysisCancelledError(OPERATION, {
+            capturedOutput: {
+              stdout: result.value.diagnostics.stdout,
+              stderr: result.value.diagnostics.stderr,
+              truncated: false,
+            },
+          }),
+        )
       : result;
   }
 }

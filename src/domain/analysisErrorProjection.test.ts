@@ -3,6 +3,8 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisCancelledError,
+  AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import { BinaryTargetError } from "./configurationErrors.js";
@@ -16,6 +18,41 @@ import {
 import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
+import { ProviderSelectionError } from "./providerSelectionError.js";
+
+const retainedOutput = {
+  stdout: "selected output\u0000",
+  stderr: "upstream warning",
+  truncated: true,
+};
+it.each([
+  new AnalysisInputError("inspect", { capturedOutput: retainedOutput }),
+  new AnalysisOutputError("inspect", "invalid reply", {
+    capturedOutput: retainedOutput,
+  }),
+  new AnalysisCapabilityUnavailableError(
+    "provider",
+    "inspect",
+    "unsupported profile",
+    { capturedOutput: retainedOutput },
+  ),
+  new AnalysisCancelledError("inspect", { capturedOutput: retainedOutput }),
+  new AnalysisTimeoutError("inspect", 30, { capturedOutput: retainedOutput }),
+  new ProviderSelectionError({
+    operation: "inspect",
+    reason: "provider_unavailable",
+    requestedProviderId: "provider",
+    candidateIds: [],
+    capturedOutput: retainedOutput,
+  }),
+])(
+  "retains captured output without changing the typed primary failure: $._tag",
+  (failure) => {
+    expect(projectAnalysisError(failure).details?.captured_output).toEqual(
+      retainedOutput,
+    );
+  },
+);
 
 describe("analysis error projection: provider failures", () => {
   it("projects the primary browser failure alongside incomplete cleanup", () => {

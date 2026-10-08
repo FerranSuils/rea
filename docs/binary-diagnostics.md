@@ -46,6 +46,11 @@ uses isolated mode and an owned cache. Exact upstream profiles are recorded in
   ranges include the terminating NUL and base64 bytes exclude it.
 - NOBITS and NULL sections provide no file bytes. Reported file-backed ranges
   are checked against snapshot size again at the public boundary.
+- Sectionless dynamic images still report dependency names with raw bytes and
+  file locations where uniquely mapped. Missing symbol/relocation section tables
+  do not establish that those runtime tables are absent.
+  Upstream RELRO/canary heuristics rely on sections and can be incomplete in
+  this case; their reported candidates retain an explicit coverage limitation.
 - DT_NEEDED/PT_INTERP are reported names, not resolved runtime paths. GOT/PLT
   maps are derived convenience views and may collapse aliases; completeness
   remains unknown and original upstream warnings are returned inline.
@@ -63,3 +68,6 @@ owned process/root cleanup completes independently of cancellation.
 Core files, GDB session/state/control, optional pwndbg enrichment and instruction
 inspection are separate increments tracked by #969. This increment makes no
 real support claim for those features or other operating systems/architectures.
+
+Typed decoder failures retain bounded `captured_output` (stdout, stderr and an
+explicit truncation flag) alongside the original failure category and reason.

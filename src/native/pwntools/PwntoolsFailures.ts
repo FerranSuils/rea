@@ -1,5 +1,9 @@
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../../domain/analysisErrorBase.js";
+import type { ProviderProcessSnapshot } from "../../process/ProviderProcess.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -27,6 +31,10 @@ export const pwntoolsLayoutFailure = (
 ): AnalysisError => {
   if (cause instanceof AnalysisError) return cause;
   if (cause instanceof OwnedCommandFailure) {
+    const outputOptions =
+      cause.snapshot === null
+        ? undefined
+        : { capturedOutput: capturedPwntoolsOutput(cause.snapshot) };
     if (cause.cleanupFailure !== null)
       return new ProviderCleanupError(
         PWNTOOLS_PROVIDER_IDENTITY.id,
@@ -43,11 +51,15 @@ export const pwntoolsLayoutFailure = (
         { operation: OPERATION, cause },
       );
     if (cause.reason === "cancelled")
-      return new AnalysisCancelledError(OPERATION);
+      return new AnalysisCancelledError(OPERATION, outputOptions);
     if (cause.reason === "timeout")
-      return new AnalysisTimeoutError(OPERATION, PWNTOOLS_LIMITS.timeoutMs);
+      return new AnalysisTimeoutError(
+        OPERATION,
+        PWNTOOLS_LIMITS.timeoutMs,
+        outputOptions,
+      );
     if (cause.reason === "output-limit")
-      return new AnalysisOutputError(OPERATION, cause.message);
+      return new AnalysisOutputError(OPERATION, cause.message, outputOptions);
   }
   if (cause instanceof ArtifactReaderFailure) {
     if (cause.reason === "integrity")
@@ -119,8 +131,10 @@ export const pwntoolsUnavailable = (
   reason: string,
   path: string,
   systemCode?: string,
+  capturedOutput?: AnalysisCapturedOutput,
 ): ProviderSelectionError =>
   new ProviderSelectionError({
+    ...(capturedOutput === undefined ? {} : { capturedOutput }),
     operation: OPERATION,
     reason: "provider_unavailable",
     requestedProviderId: PWNTOOLS_PROVIDER_IDENTITY.id,
@@ -138,3 +152,12 @@ export const pwntoolsUnavailable = (
       },
     ],
   });
+
+/** Retain bounded text output and the shared supervisor's observed truncation flag. */
+export const capturedPwntoolsOutput = (
+  snapshot: ProviderProcessSnapshot,
+): AnalysisCapturedOutput => ({
+  stdout: snapshot.stdout.text,
+  stderr: snapshot.stderr.text,
+  truncated: snapshot.diagnosticTruncated === true,
+});

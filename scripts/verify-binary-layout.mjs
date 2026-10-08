@@ -92,6 +92,11 @@ try {
       ["-O1", "-g", ...flags, source, "-o", join(root.path, name)],
       { timeout: 30_000, maxBuffer: 1024 * 1024 },
     );
+  const sectionlessBytes = await readFile(join(root.path, "protected"));
+  sectionlessBytes.writeBigUInt64LE(0n, 40);
+  sectionlessBytes.writeUInt16LE(0, 60);
+  sectionlessBytes.writeUInt16LE(0, 62);
+  await writeFile(join(root.path, "sectionless"), sectionlessBytes);
   await copyFile(join(root.path, "protected"), join(root.path, "stripped"));
   await execute("strip", ["--strip-all", join(root.path, "stripped")], {
     timeout: 10_000,
@@ -117,6 +122,7 @@ try {
     "relocatable",
     "library",
     "stripped",
+    "sectionless",
     "high",
   ]) {
     const path = join(root.path, name);
@@ -129,9 +135,30 @@ try {
       assert.equal(value.runtime_load_base, null);
       assert.equal(value.linkage.runtime_library_paths, null);
       assert.equal(value.mitigations.evidence_kind, "inferred");
-      assert.ok(
-        value.sections.some((section) => section.file_backing === "none"),
-      );
+      if (name === "sectionless") {
+        assert.equal(value.sections.length, 0);
+        assert.equal(value.symbols.length, 0);
+        assert.deepEqual(
+          value.linkage.needed_libraries,
+          reports.get("protected").linkage.needed_libraries,
+        );
+        assert.ok(
+          value.linkage.needed_libraries.every(
+            (name) => name.location !== null && name.bytes_base64 !== null,
+          ),
+        );
+        // Preserve the unchanged engine's section-dependent heuristic and its
+        // explicit coverage limitation, rather than inventing a stronger label.
+        assert.equal(value.mitigations.relro, "Partial");
+        assert.ok(
+          value.limitations.some((item) =>
+            item.includes("RELRO/canary indicators may be incomplete"),
+          ),
+        );
+      } else
+        assert.ok(
+          value.sections.some((section) => section.file_backing === "none"),
+        );
       for (const section of value.sections) {
         assert.ok(typeof section.address === "string");
         if (section.file_backing === "file")
@@ -146,6 +173,13 @@ try {
     }
   }
   const protectedReport = reports.get("protected");
+  const fileSymbols = protectedReport.symbols.filter(
+    (symbol) => symbol.type === "STT_FILE",
+  );
+  assert.ok(fileSymbols.length > 0);
+  assert.ok(
+    fileSymbols.every((symbol) => symbol.value_meaning === "no-address"),
+  );
   const plain = reports.get("plain");
   assert.equal(protectedReport.mitigations.position_independent, true);
   assert.equal(protectedReport.mitigations.nx_indicator, true);
@@ -245,29 +279,31 @@ try {
     await inspect(mode, join(root.path, "absent"), "invalid_input");
     cases++;
   }
-  const trace = join(root.path, "exec.trace");
-  await execute(
-    strace,
-    [
-      "-ff",
-      "-e",
-      "trace=execve,execveat",
-      "-s",
-      "4096",
-      "-o",
-      trace,
-      process.execPath,
-      entrypoint,
-      "inspect-binary-layout",
-      join(root.path, "protected"),
-      "--json",
-    ],
-    {
-      env: { ...environment, PATH: "/usr/bin:/bin" },
-      timeout: 45_000,
-      maxBuffer: 64 * 1024 * 1024,
-    },
-  );
+  for (const name of ["protected", "sectionless"]) {
+    const trace = join(root.path, `exec.trace.${name}`);
+    await execute(
+      strace,
+      [
+        "-ff",
+        "-e",
+        "trace=execve,execveat",
+        "-s",
+        "4096",
+        "-o",
+        trace,
+        process.execPath,
+        entrypoint,
+        "inspect-binary-layout",
+        join(root.path, name),
+        "--json",
+      ],
+      {
+        env: { ...environment, PATH: "/usr/bin:/bin" },
+        timeout: 45_000,
+        maxBuffer: 64 * 1024 * 1024,
+      },
+    );
+  }
   const executions = [];
   for (const file of await readdir(root.path)) {
     if (!file.startsWith("exec.trace.")) continue;
@@ -297,7 +333,7 @@ try {
   }
   assert.ok(executions.includes(process.execPath));
   assert.ok(executions.includes(python));
-  cases++;
+  cases += 2;
 } catch (cause) {
   failures.push(cause);
 } finally {

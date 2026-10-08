@@ -23,3 +23,9 @@ The real verification lane traces host exec syscalls, checks original artifact
 hashes and observes released owned processes. No negative claim relies only on
 an unmodified target's sentinel: upstream can execute a patched copy when its
 runtime-library accessors are used.
+
+The instance-local adapter subclass forwards the documented pyelftools 0.33
+`iter_segments(type=...)` / `iter_sections(type=...)` filters missing from
+pwntools 4.15.0 cached overrides. No upstream file or global method is changed.
+Sectionless dynamic string tables use unique DT_STRTAB/DT_STRSZ mappings to
+file-backed PT_LOAD bytes; unresolved coordinates remain explicitly unknown.

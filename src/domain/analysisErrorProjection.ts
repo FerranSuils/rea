@@ -39,7 +39,11 @@ export const projectAnalysisError = (
 ): AnalysisErrorProjection => {
   assertKnownAnalysisErrorTag(error._tag);
   const code = errorCode(error);
-  const details = errorDetails(error);
+  const primaryDetails = errorDetails(error);
+  const details =
+    error.capturedOutput === undefined
+      ? primaryDetails
+      : { ...primaryDetails, captured_output: { ...error.capturedOutput } };
   return {
     code,
     category: analysisErrorCategory(error),

@@ -37,15 +37,20 @@ def location(offset, size, length):
 
 
 def name_reference(display, section, offset, content):
-    if section is None or section.header.sh_type != "SHT_STRTAB":
+    header = getattr(section, "header", None)
+    if header is None or header.sh_type != "SHT_STRTAB":
         return {"display": display, "bytes_base64": None, "location": None,
                 "unknown_reason": "Referenced string table could not be resolved."}
-    header = section.header
-    if not 0 <= offset < header.sh_size:
+    return name_in_table(display, header.sh_offset, header.sh_size, offset, content)
+
+
+def name_in_table(display, table_start, table_size, offset, content):
+    location(table_start, table_size, len(content))
+    if not 0 <= offset < table_size:
         return {"display": display, "bytes_base64": None, "location": None,
                 "unknown_reason": "Reported name offset lies outside the referenced string table."}
-    start = header.sh_offset + offset
-    limit = header.sh_offset + header.sh_size
+    start = table_start + offset
+    limit = table_start + table_size
     end = content.find(b"\0", start, limit)
     if end < 0:
         raise LayoutFailure("format", "ELF name lacks a terminator within its reported string table.")
@@ -54,12 +59,29 @@ def name_reference(display, section, offset, content):
             "location": location(start, len(raw) + 1, len(content)), "unknown_reason": None}
 
 
+def dynamic_name_reference(display, string_table, tags, offset, image, content):
+    if getattr(string_table, "header", None) is not None:
+        return name_reference(display, string_table, offset, content)
+    starts = [tag.entry.d_val for tag in tags if tag.entry.d_tag == "DT_STRTAB"]
+    sizes = [tag.entry.d_val for tag in tags if tag.entry.d_tag == "DT_STRSZ"]
+    offsets = set()
+    if len(starts) == 1 and len(sizes) == 1:
+        for segment in image.iter_segments_by_type("PT_LOAD"):
+            h = segment.header
+            if starts[0] >= h.p_vaddr and starts[0] + sizes[0] <= h.p_vaddr + h.p_filesz:
+                offsets.add(h.p_offset + starts[0] - h.p_vaddr)
+    if len(offsets) != 1:
+        return {"display": display, "bytes_base64": None, "location": None,
+                "unknown_reason": "Dynamic string table lacks a unique file-backed DT_STRTAB/DT_STRSZ mapping."}
+    return name_in_table(display, offsets.pop(), sizes[0], offset, content)
+
+
 def symbol_value_meaning(raw, image_type, section_count):
     index = raw.st_shndx
+    if raw.st_info.type == "STT_FILE": return "no-address"
     if index == "SHN_UNDEF": return "undefined"
     if index == "SHN_COMMON": return "alignment"
     if index == "SHN_ABS": return "absolute-value"
-    if raw.st_info.type == "STT_FILE": return "no-address"
     if not isinstance(index, int) or not 0 < index < section_count or index >= 0xff00:
         return "unknown-section-index"
     if image_type == "ET_REL": return "section-offset"
@@ -92,8 +114,20 @@ def inspect_elf(path, cache):
     with context.local(cache_dir=str(cache), log_level="warning"):
         from elftools.common.exceptions import ELFError
         from pwnlib.elf import ELF
+        class LayoutELF(ELF):
+            # pyelftools 0.33 calls these documented filters internally;
+            # pwntools 4.15.0's cached overrides do not accept the argument.
+            # Forward the filter on this adapter instance, without modifying
+            # either upstream package or process-global methods.
+            def iter_segments(self, type=None):
+                return (segment for segment in super().iter_segments()
+                        if type is None or segment.header.p_type == type)
+
+            def iter_sections(self, type=None):
+                return (section for section in super().iter_sections()
+                        if type is None or section.header.sh_type == type)
         try:
-            image = ELF(str(path), checksec=False)
+            image = LayoutELF(str(path), checksec=False)
             if image.arch != "amd64" or image.bits != 64 or image.endian != "little":
                 raise LayoutFailure("unsupported", "Initial layout profile requires x86-64 ELF64 little-endian objects.")
             if image.header.e_type not in ("ET_EXEC", "ET_DYN", "ET_REL"):
@@ -152,9 +186,10 @@ def inspect_elf(path, cache):
                 })
                 if h.p_type == "PT_DYNAMIC":
                     string_table = segment._get_stringtable()
-                    for tag in segment.iter_tags():
+                    tags = list(segment.iter_tags())
+                    for tag in tags:
                         if tag.entry.d_tag == "DT_NEEDED":
-                            needed.append(name_reference(tag.needed, string_table, tag.entry.d_val, content))
+                            needed.append(dynamic_name_reference(tag.needed, string_table, tags, tag.entry.d_val, image, content))
                 if h.p_type == "PT_INTERP":
                     raw = content[h.p_offset:h.p_offset + h.p_filesz]
                     if not raw or raw[-1:] != b"\0":
@@ -176,6 +211,8 @@ def inspect_elf(path, cache):
                     "GOT/PLT are derived upstream convenience maps; aliases may collapse and warnings may indicate incomplete coverage. Their completeness is unknown.",
                     "Mitigations are upstream static heuristics, not runtime protection. ET_DYN does not prove an executable; absent canary symbols do not prove every function unprotected.",
                     "This profile inspects ELF EXEC/DYN/REL layout only. It does not analyze recorded cores, resolve loaded libraries, execute the target or start a debugger.",
+                    "Symbol/relocation inventories reflect original section tables. A sectionless image can still report dynamic dependency names; missing tables do not prove absence of dynamic symbols or relocations.",
+                    *(["Sectionless images lack the .dynamic section and symbol tables used by upstream heuristics. RELRO/canary indicators may be incomplete; their values remain reported static candidates, with protection coverage unknown."] if not all_sections else []),
                 ],
             }
         except LayoutFailure:

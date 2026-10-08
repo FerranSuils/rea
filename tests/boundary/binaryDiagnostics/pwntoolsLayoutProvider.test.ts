@@ -12,6 +12,7 @@ import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 const unsupportedHost = process.platform !== "linux" || process.arch !== "x64";
 const requestSchema = z.strictObject({
@@ -81,66 +82,72 @@ it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
   },
 );
 
-it("reports private storage denial as an adapter failure rather than selected-input read denial", async () => {
-  const { path } = await fixture();
-  const provider = new PwntoolsLayoutProvider(
-    { REA_PWNTOOLS_PYTHON: process.execPath },
-    undefined,
-    () =>
-      Promise.reject(
-        Object.assign(new Error("private root denied"), { code: "EACCES" }),
-      ),
-  );
-  expect(await provider.inspect({ path })).toMatchObject({
-    ok: false,
-    error: {
-      _tag: "ProviderAdapterError",
-      diagnostics: { phase: "decoder", reason: "private root denied" },
-    },
-  });
-});
-
-it("preserves a decoder failure when private-root cleanup also fails", async () => {
-  const { path, root } = await fixture();
-  const provider = new PwntoolsLayoutProvider(
-    { REA_PWNTOOLS_PYTHON: process.execPath },
-    async (spawn) => {
-      const requestPath = spawn.arguments.at(-1);
-      if (requestPath === undefined) throw new Error("Request path missing");
-      const request = requestSchema.parse(
-        JSON.parse(await readFile(requestPath, "utf8")),
-      );
-      await writeFile(
-        request.reply_path,
-        JSON.stringify({
-          ok: false,
-          reason: "format",
-          message: "Malformed original ELF table.",
-        }),
-      );
-      return spawnOwnedProviderProcess({
-        ...spawn,
-        arguments: ["-e", "process.exit(0)"],
-      });
-    },
-    () =>
-      Promise.resolve({
-        path: root,
-        close: () => Promise.reject(new Error("root cleanup failed")),
-      }),
-  );
-  expect(await provider.inspect({ path })).toMatchObject({
-    ok: false,
-    error: {
-      cleanupIncomplete: true,
-      cleanupResources: [root],
-      diagnostics: {
-        reason: "root cleanup failed",
-        previous_error: { category: "invalid_input" },
+it.runIf(!unsupportedHost)(
+  "reports private storage denial as an adapter failure rather than selected-input read denial",
+  async () => {
+    const { path } = await fixture();
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      undefined,
+      () =>
+        Promise.reject(
+          Object.assign(new Error("private root denied"), { code: "EACCES" }),
+        ),
+    );
+    expect(await provider.inspect({ path })).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        diagnostics: { phase: "decoder", reason: "private root denied" },
       },
-    },
-  });
-});
+    });
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "preserves a decoder failure when private-root cleanup also fails",
+  async () => {
+    const { path, root } = await fixture();
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      async (spawn) => {
+        const requestPath = spawn.arguments.at(-1);
+        if (requestPath === undefined) throw new Error("Request path missing");
+        const request = requestSchema.parse(
+          JSON.parse(await readFile(requestPath, "utf8")),
+        );
+        await writeFile(
+          request.reply_path,
+          JSON.stringify({
+            ok: false,
+            reason: "format",
+            message: "Malformed original ELF table.",
+          }),
+        );
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          arguments: ["-e", "process.exit(0)"],
+        });
+      },
+      () =>
+        Promise.resolve({
+          path: root,
+          close: () => Promise.reject(new Error("root cleanup failed")),
+        }),
+    );
+    expect(await provider.inspect({ path })).toMatchObject({
+      ok: false,
+      error: {
+        cleanupIncomplete: true,
+        cleanupResources: [root],
+        diagnostics: {
+          reason: "root cleanup failed",
+          previous_error: { category: "invalid_input" },
+        },
+      },
+    });
+  },
+);
 const fixture = async () => {
   const workspace = await createTestWorkspace("rea-layout-boundary-");
   const root = workspace.root;
@@ -150,33 +157,44 @@ const fixture = async () => {
   return { root, path };
 };
 
-it("preserves cancellation during the actual signal-aware snapshot write and closes its acquired root", async () => {
-  const { path } = await fixture();
-  const controller = new AbortController();
-  let ownedPath = "";
-  const provider = new PwntoolsLayoutProvider(
-    { REA_PWNTOOLS_PYTHON: process.execPath },
-    () => {
-      throw new Error("Decoder must not launch");
-    },
-    async () => {
-      const root = await PrivateRuntimeRoot.create({
-        prefix: "rea-layout-cancel-",
-      });
-      ownedPath = root.path;
-      controller.abort();
-      return root;
-    },
-  );
-  expect(
-    await provider.inspect({ path }, { signal: controller.signal }),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
-  await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
-});
+it.runIf(!unsupportedHost)(
+  "preserves cancellation during the actual signal-aware snapshot write and closes its acquired root",
+  async () => {
+    const { path } = await fixture();
+    const controller = new AbortController();
+    let ownedPath = "";
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      () => {
+        throw new Error("Decoder must not launch");
+      },
+      async () => {
+        const root = await PrivateRuntimeRoot.create({
+          prefix: "rea-layout-cancel-",
+        });
+        ownedPath = root.path;
+        controller.abort();
+        return root;
+      },
+    );
+    expect(
+      await provider.inspect({ path }, { signal: controller.signal }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+    await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
 
 it
   .runIf(!unsupportedHost)
-  .each(["success", "format", "wrong-profile", "malformed-reply"])(
+  .each([
+    "success",
+    "format",
+    "unavailable",
+    "unsupported",
+    "output-limit",
+    "wrong-profile",
+    "malformed-reply",
+  ])(
   "preserves process/reply boundaries and cleans private snapshots: %s",
   async (scenario) => {
     const { root, path } = await fixture();
@@ -204,10 +222,15 @@ it
           scenario === "malformed-reply"
             ? "broken-json"
             : JSON.stringify(
-                scenario === "format"
+                [
+                  "format",
+                  "unavailable",
+                  "unsupported",
+                  "output-limit",
+                ].includes(scenario)
                   ? {
                       ok: false,
-                      reason: "format",
+                      reason: scenario,
                       message: "ELF table is truncated.",
                     }
                   : {
@@ -243,7 +266,19 @@ it
           _tag:
             scenario === "format"
               ? "AnalysisInputError"
-              : "AnalysisOutputError",
+              : scenario === "unavailable"
+                ? "ProviderSelectionError"
+                : scenario === "unsupported"
+                  ? "AnalysisCapabilityUnavailableError"
+                  : "AnalysisOutputError",
+        },
+      });
+    if (!result.ok)
+      expect(projectAnalysisError(result.error).details).toMatchObject({
+        captured_output: {
+          stdout: "",
+          stderr: "upstream warning",
+          truncated: false,
         },
       });
     expect(await readFile(path, "utf8")).toBe("source-owned-seam-bytes");
@@ -252,25 +287,30 @@ it
   },
 );
 
-it("rejects missing configuration, absent input and prelaunch cancellation distinctly", async () => {
-  const { path } = await fixture();
-  expect(await new PwntoolsLayoutProvider({}).inspect({ path })).toMatchObject({
-    ok: false,
-    error: { _tag: "ProviderSelectionError", reason: "provider_unavailable" },
-  });
-  const provider = new PwntoolsLayoutProvider({
-    REA_PWNTOOLS_PYTHON: process.execPath,
-  });
-  expect(await provider.inspect({ path: path + ".absent" })).toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisInputError" },
-  });
-  const controller = new AbortController();
-  controller.abort();
-  expect(
-    await provider.inspect({ path }, { signal: controller.signal }),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
-});
+it.runIf(!unsupportedHost)(
+  "rejects missing configuration, absent input and prelaunch cancellation distinctly",
+  async () => {
+    const { path } = await fixture();
+    expect(
+      await new PwntoolsLayoutProvider({}).inspect({ path }),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "ProviderSelectionError", reason: "provider_unavailable" },
+    });
+    const provider = new PwntoolsLayoutProvider({
+      REA_PWNTOOLS_PYTHON: process.execPath,
+    });
+    expect(await provider.inspect({ path: path + ".absent" })).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+    const controller = new AbortController();
+    controller.abort();
+    expect(
+      await provider.inspect({ path }, { signal: controller.signal }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+  },
+);
 it.runIf(unsupportedHost)(
   "reports unverified host coverage before acquiring a provider",
   async () => {
@@ -280,5 +320,68 @@ it.runIf(unsupportedHost)(
       ok: false,
       error: { _tag: "AnalysisCapabilityUnavailableError" },
     });
+  },
+);
+
+it.runIf(!unsupportedHost)(
+  "retains decoder warnings when cancellation arrives during successful root cleanup",
+  async () => {
+    const { path } = await fixture();
+    const controller = new AbortController();
+    let ownedPath = "";
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      async (spawn) => {
+        const requestPath = spawn.arguments.at(-1);
+        if (requestPath === undefined) throw new Error("Request path missing");
+        const request = requestSchema.parse(
+          JSON.parse(await readFile(requestPath, "utf8")),
+        );
+        const {
+          artifact: _artifact,
+          diagnostics: _diagnostics,
+          ...value
+        } = binaryLayoutFixture(path);
+        await writeFile(
+          request.reply_path,
+          JSON.stringify({
+            ok: true,
+            profile: PWNTOOLS_PROVIDER_IDENTITY.version,
+            value,
+          }),
+        );
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: ["-e", 'process.stderr.write("retained late warning")'],
+        });
+      },
+      async () => {
+        const root = await PrivateRuntimeRoot.create({
+          prefix: "rea-layout-late-cancel-",
+        });
+        ownedPath = root.path;
+        return {
+          path: root.path,
+          close: async () => {
+            await root.close();
+            controller.abort();
+          },
+        };
+      },
+    );
+    const result = await provider.inspect(
+      { path },
+      { signal: controller.signal },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    if (result.ok) throw new Error("Late cancellation must be preserved");
+    expect(projectAnalysisError(result.error).details?.captured_output).toEqual(
+      { stdout: "", stderr: "retained late warning", truncated: false },
+    );
+    await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
