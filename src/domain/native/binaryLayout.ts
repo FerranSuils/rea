@@ -170,7 +170,11 @@ const binaryLayoutObjectSchema = z.strictObject({
     stack_canary_indicator: z.boolean(),
     relro: z.enum(["Partial", "Full"]).nullable(),
   }),
-  diagnostics: z.strictObject({ stdout: z.string(), stderr: z.string() }),
+  diagnostics: z.strictObject({
+    stdout: z.string(),
+    stderr: z.string(),
+    truncated: z.boolean(),
+  }),
   limitations: z.array(z.string()),
 });
 

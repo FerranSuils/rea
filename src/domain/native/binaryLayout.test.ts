@@ -56,7 +56,7 @@ const report = () => ({
     stack_canary_indicator: false,
     relro: null,
   },
-  diagnostics: { stdout: "", stderr: "" },
+  diagnostics: { stdout: "", stderr: "", truncated: false },
   limitations: [],
 });
 

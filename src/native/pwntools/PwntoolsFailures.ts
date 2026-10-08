@@ -11,6 +11,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
   AnalysisTimeoutError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -19,6 +20,7 @@ import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import {
   PWNTOOLS_PROVIDER_IDENTITY,
   PWNTOOLS_LIMITS,
+  PWNTOOLS_MEMORY_FAILURE_EXIT,
 } from "./PwntoolsRelease.js";
 
 const OPERATION = "inspect_binary_layout";
@@ -61,6 +63,18 @@ export const pwntoolsLayoutFailure = (
       );
     if (cause.reason === "output-limit")
       return new AnalysisOutputError(OPERATION, cause.message, outputOptions);
+    if (
+      cause.reason === "process" &&
+      cause.snapshot?.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT &&
+      cause.snapshot.signal === null
+    )
+      return new AnalysisResourceConstraintError(
+        OPERATION,
+        "memory",
+        "The owned Python bridge reported a memory allocation failure without a structured reply; the exact allocation cause and effective resource limits are unknown.",
+        null,
+        outputOptions,
+      );
   }
   if (
     cause instanceof Error &&

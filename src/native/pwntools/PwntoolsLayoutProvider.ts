@@ -245,6 +245,7 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
         diagnostics: {
           stdout: execution.stdout.text,
           stderr: execution.stderr.text,
+          truncated: capturedOutput.truncated,
         },
       });
       if (!validated.success)
@@ -295,7 +296,7 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
                     captured_output: {
                       stdout: result.value.diagnostics.stdout,
                       stderr: result.value.diagnostics.stderr,
-                      truncated: false,
+                      truncated: result.value.diagnostics.truncated,
                     },
                   }
                 : {}),
@@ -311,7 +312,7 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
             capturedOutput: {
               stdout: result.value.diagnostics.stdout,
               stderr: result.value.diagnostics.stderr,
-              truncated: false,
+              truncated: result.value.diagnostics.truncated,
             },
           }),
         )

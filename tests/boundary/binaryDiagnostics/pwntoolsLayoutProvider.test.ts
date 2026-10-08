@@ -20,6 +20,103 @@ const requestSchema = z.strictObject({
   reply_path: z.string(),
 });
 
+it
+  .runIf(!unsupportedHost)
+  .each(["reserved-memory-status", "ordinary-exit", "signal"])(
+  "classifies only the explicit bridge memory status, without guessing from stderr: %s",
+  async (scenario) => {
+    const { path } = await fixture();
+    let ownedPath = "";
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      async (spawn) => {
+        ownedPath = spawn.cwd ?? "";
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            'process.stderr.write("MemoryError-like diagnostic\\n");' +
+              (scenario === "signal"
+                ? 'process.kill(process.pid,"SIGKILL")'
+                : `process.exit(${scenario === "reserved-memory-status" ? "75" : "7"})`),
+          ],
+        });
+      },
+    );
+    const result = await provider.inspect({ path });
+    if (result.ok) throw new Error("Expected explicit process failure");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe(
+      scenario === "reserved-memory-status"
+        ? "resource_constraint"
+        : "execution_failure",
+    );
+    expect(JSON.stringify(projected)).toContain("MemoryError-like diagnostic");
+    if (scenario === "reserved-memory-status")
+      expect(projected.details).toMatchObject({
+        resource: "memory",
+        reported_limits: null,
+        captured_output: { truncated: false },
+      });
+    await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.runIf(!unsupportedHost).each([1048576, 1048577])(
+  "keeps complete diagnostics or fails explicitly when a valid reply emits %s bytes",
+  async (bytes) => {
+    const { path } = await fixture();
+    let ownedPath = "";
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      async (spawn) => {
+        ownedPath = spawn.cwd ?? "";
+        const requestPath = spawn.arguments.at(-1);
+        if (requestPath === undefined) throw new Error("Request path missing");
+        const request = requestSchema.parse(
+          JSON.parse(await readFile(requestPath, "utf8")),
+        );
+        const {
+          artifact: _artifact,
+          diagnostics: _diagnostics,
+          ...value
+        } = binaryLayoutFixture(path);
+        await writeFile(
+          request.reply_path,
+          JSON.stringify({
+            ok: true,
+            profile: PWNTOOLS_PROVIDER_IDENTITY.version,
+            value,
+          }),
+        );
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            `process.stdout.write("x".repeat(${String(bytes)}))`,
+          ],
+        });
+      },
+    );
+    const result = await provider.inspect({ path });
+    if (bytes === 1048576) {
+      if (!result.ok) throw result.error;
+      expect(result.value.diagnostics.stdout).toHaveLength(bytes);
+      expect(result.value.diagnostics.truncated).toBe(false);
+    } else {
+      if (result.ok)
+        throw new Error("Excess diagnostics must not return partial success");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "unreadable_output",
+        details: { captured_output: { truncated: true } },
+      });
+    }
+    await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
 it.runIf(!unsupportedHost).each([
   null,
   {

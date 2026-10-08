@@ -330,6 +330,24 @@ try {
     bytes.writeBigUInt64LE(8n, header + 56);
     return [`undersized-entry-${type}`, bytes, "invalid_input"];
   });
+  const relocationSection = relocatable.sections.find(
+    (item) => item.type === "SHT_RELA",
+  );
+  assert.notEqual(relocationSection, undefined);
+  const undersizedRelocationEntries = [
+    ["REL", 9],
+    ["RELA", 4],
+  ].map(([type, sectionType]) => {
+    const bytes = Buffer.from(object);
+    const header = Number(BigInt(relocationSection.header_location.offset));
+    bytes.writeUInt32LE(sectionType, header + 4);
+    bytes.writeBigUInt64LE(8n, header + 32);
+    bytes.writeBigUInt64LE(8n, header + 56);
+    return [`undersized-entry-${type}`, bytes, "invalid_input"];
+  });
+  const undersizedProgramHeader = Buffer.from(sectionBearingBytes);
+  undersizedProgramHeader.writeUInt16LE(8, 54);
+  undersizedProgramHeader.writeUInt16LE(1, 56);
   const symbolTable = relocatable.sections.find(
     (section) => section.type === "SHT_SYMTAB",
   );
@@ -487,9 +505,9 @@ try {
       );
       assert.equal(error.code, "resource_constraint");
       assert.equal(error.details.resource, "memory");
-      assert.equal(
-        error.details.reported_limits.address_space_bytes,
-        100663296,
+      assert.ok(
+        error.details.reported_limits === null ||
+          error.details.reported_limits.address_space_bytes === 100663296,
       );
       assert.equal(error.details.captured_output.truncated, false);
       assert.ok(error.remediation.action.includes("memory"));
@@ -516,6 +534,8 @@ try {
     ],
     ...zeroSymbolEntries,
     ...undersizedSymbolEntries,
+    ...undersizedRelocationEntries,
+    ["undersized-program-header", undersizedProgramHeader, "invalid_input"],
     ["arm64", unsupported, "unsupported_provider"],
     ["core", core, "unsupported_provider"],
   ]) {
@@ -709,7 +729,7 @@ async function inspect(
     const value = JSON.parse(mcpTextValue(response));
     if (category !== undefined) {
       assert.equal(response.isError, true);
-      assert.equal(value.error.category, category);
+      assert.equal(value.error.category, category, JSON.stringify(value.error));
       return value.error;
     }
     assert.notEqual(response.isError, true, mcpTextValue(response));
@@ -732,7 +752,7 @@ async function inspect(
       if (category === undefined) throw cause;
       assert.equal(typeof cause.code, "number");
       const error = JSON.parse(cause.stdout);
-      assert.equal(error.category, category);
+      assert.equal(error.category, category, JSON.stringify(error));
       return error;
     }
   }
@@ -743,5 +763,6 @@ async function inspect(
     "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2",
   );
   assert.deepEqual(evidence.normalized_result, evidence.raw_result);
+  assert.equal(evidence.normalized_result.diagnostics.truncated, false);
   return evidence.normalized_result;
 }

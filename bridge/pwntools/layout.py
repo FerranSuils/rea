@@ -14,6 +14,7 @@ import sys
 PROFILE = "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2"
 PACKAGES = {"pwntools": "4.15.0", "pyelftools": "0.33", "unicorn": "2.1.2"}
 OUTPUT_BYTES = 64 * 1024 * 1024
+MEMORY_FAILURE_EXIT = 75
 
 
 class LayoutFailure(Exception):
@@ -259,6 +260,9 @@ def main(request_path):
     os.environ["PWNLIB_NOTERM"] = "1"
     os.environ["PWNLIB_CACHE_DIR"] = str(Path(request_path).parent / "cache")
     limits = None
+    # Release bounded emergency headroom before constructing a MemoryError reply.
+    # The outer exit-status contract also covers allocation failure during serialization.
+    memory_reserve = bytearray(1024 * 1024)
     try:
         limits = lower_resource_limits()
         value = inspect_elf(Path(request["snapshot_path"]), Path(request_path).parent / "cache")
@@ -267,6 +271,7 @@ def main(request_path):
     except LayoutFailure as error:
         reply = {"ok": False, "reason": error.reason, "message": str(error)}
     except MemoryError:
+        memory_reserve = None
         reply = {"ok": False, "reason": "resource-limit", "message": "pwntools memory allocation failed under the effective resource limits; the exact allocation cause is unknown.", "reported_limits": limits}
     except Exception as error:
         reply = {"ok": False, "reason": "decoder", "message": type(error).__name__ + ": " + str(error)}
@@ -279,4 +284,8 @@ def main(request_path):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    try:
+        main(sys.argv[1])
+    except MemoryError:
+        # A reserved status reports only an observed MemoryError, never guessed OOM.
+        os._exit(MEMORY_FAILURE_EXIT)

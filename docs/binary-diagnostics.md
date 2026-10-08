@@ -81,8 +81,15 @@ real support claim for those features or other operating systems/architectures.
 
 Typed decoder failures retain bounded `captured_output` (stdout, stderr and an
 explicit truncation flag) alongside the original failure category and reason.
+Successful `diagnostics` also exposes the supervisor's `truncated` flag. Output
+beyond the complete diagnostic budget is rejected, including when the decoder
+writes a valid reply; cleanup and late cancellation reuse the observed flag.
 Memory allocation failures use `resource_constraint`, with effective resource
 limits (or an explicit unknown) and memory-specific recovery guidance. A
 MemoryError alone does not establish the exact failed allocation or that a
 particular budget was exhausted. Invalid undersized symbol entries are rejected
 before REA reports source ranges for them.
+The bridge reserves 1 MiB to report allocation failures. If even error reporting
+or serialization fails with MemoryError, its reserved exit status preserves the
+resource classification with unknown effective limits. Signal termination alone
+is never classified as observed memory exhaustion.
