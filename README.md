@@ -140,6 +140,8 @@ CLI commands use the same workflows.
 
 [Open the full-size figure](website/public/assets/figures/rea-investigation-flow.svg).
 
+<a id="current-status"></a>
+
 ## What you can analyze
 
 REA requires Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+, plus npm.
@@ -161,11 +163,14 @@ Static JavaScript and .NET inspection read the supplied files without running
 the application. Runtime capture runs or interacts with the selected target
 using your user permissions; each runtime guide describes its effects.
 
+<a id="choosing-a-deep-analysis-provider"></a>
+
 Native formats and host support vary by provider. See
 [Hopper and Ghidra setup](docs/installation.md#hopper), the
 [IDA guide](docs/ida-provider.md), and
 [experimental Windows Ghidra support](docs/windows-ghidra-p0.md).
 Ghidra also supports [16-bit DOS analysis](docs/ghidra-dos.md).
+For provider selection, see the [CLI guide](docs/cli.md#choose-a-provider).
 Check [release availability](docs/installation.md#released-package-and-main)
 for features added since the latest npm release.
 
