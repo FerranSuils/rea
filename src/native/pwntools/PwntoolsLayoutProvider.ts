@@ -205,7 +205,13 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
         },
       });
     } catch (cause: unknown) {
-      result = err(pwntoolsLayoutFailure(cause, phase, selectedPath));
+      result = err(
+        options?.signal?.aborted &&
+          (cause === options.signal.reason ||
+            (cause instanceof Error && cause.name === "AbortError"))
+          ? new AnalysisCancelledError(OPERATION)
+          : pwntoolsLayoutFailure(cause, phase, selectedPath),
+      );
     }
     if (root !== undefined) {
       try {

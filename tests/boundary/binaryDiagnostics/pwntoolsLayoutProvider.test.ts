@@ -10,14 +10,16 @@ import { PwntoolsLayoutProvider } from "../../../src/native/pwntools/PwntoolsLay
 import { PWNTOOLS_PROVIDER_IDENTITY } from "../../../src/native/pwntools/PwntoolsRelease.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
+import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { binaryLayoutFixture } from "../../fixtures/binaryDiagnostics/layout.js";
 
+const unsupportedHost = process.platform !== "linux" || process.arch !== "x64";
 const requestSchema = z.strictObject({
   snapshot_path: z.string(),
   reply_path: z.string(),
 });
 
-it.each(["cancelled", "output-limit", "process"])(
+it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
   "releases an acquired decoder and its snapshot after %s",
   async (scenario) => {
     const { path } = await fixture();
@@ -148,7 +150,33 @@ const fixture = async () => {
   return { root, path };
 };
 
-it.each(["success", "format", "wrong-profile", "malformed-reply"])(
+it("preserves cancellation during the actual signal-aware snapshot write and closes its acquired root", async () => {
+  const { path } = await fixture();
+  const controller = new AbortController();
+  let ownedPath = "";
+  const provider = new PwntoolsLayoutProvider(
+    { REA_PWNTOOLS_PYTHON: process.execPath },
+    () => {
+      throw new Error("Decoder must not launch");
+    },
+    async () => {
+      const root = await PrivateRuntimeRoot.create({
+        prefix: "rea-layout-cancel-",
+      });
+      ownedPath = root.path;
+      controller.abort();
+      return root;
+    },
+  );
+  expect(
+    await provider.inspect({ path }, { signal: controller.signal }),
+  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+  await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+it
+  .runIf(!unsupportedHost)
+  .each(["success", "format", "wrong-profile", "malformed-reply"])(
   "preserves process/reply boundaries and cleans private snapshots: %s",
   async (scenario) => {
     const { root, path } = await fixture();
@@ -243,3 +271,14 @@ it("rejects missing configuration, absent input and prelaunch cancellation disti
     await provider.inspect({ path }, { signal: controller.signal }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
 });
+it.runIf(unsupportedHost)(
+  "reports unverified host coverage before acquiring a provider",
+  async () => {
+    expect(
+      await new PwntoolsLayoutProvider({}).inspect({ path: "/selected.elf" }),
+    ).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCapabilityUnavailableError" },
+    });
+  },
+);
