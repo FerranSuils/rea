@@ -54,6 +54,8 @@ REA connects your agent to tools for inspecting native binaries, JavaScript and 
 
 Setup registers REA with your agent and installs matching workflow instructions. Native analysis can use an existing Hopper or Ghidra installation; setup can optionally install Hopper with approval. Static JavaScript analysis needs neither engine.
 
+> **[Visit the REA website](https://morluto.github.io/rea/)** for setup instructions, illustrated guides, and real case studies.
+
 ## Quick start
 
 ### Set up your agent
