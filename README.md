@@ -150,6 +150,7 @@ Additional tools and host support depend on the target:
 | Native binaries        | Pseudocode, assembly, strings, symbols, calls and references                         | Hopper, Ghidra or IDA; [native analysis](https://morluto.github.io/rea/guides/native/)                                                |
 | JavaScript / Electron  | Modules, imports, source maps, routes, IPC and native add-on relationships           | Node.js and npm; [application analysis](https://morluto.github.io/rea/guides/javascript/)                                             |
 | Websites               | Page structure, scripts, network observations and requested screenshots              | A Chrome-family browser; [browser analysis](https://morluto.github.io/rea/guides/browser/)                                            |
+| Saved network captures | Requests, responses, exposed payloads and source locations                           | HAR; mitmdump on Linux for native mitmproxy captures; [capture guide](docs/web-network-captures.md)                                   |
 | .NET assemblies        | Metadata, CIL instructions, declared native dependencies and build comparisons       | Static inspection; [managed-code guide](docs/managed-code-analysis.md)                                                                |
 | Android APKs           | Manifest declarations, classes, decompiled methods and references                    | Headless JADX and a full JDK on Linux/macOS; [Android guide](docs/android-analysis.md)                                                |
 | Firmware               | Regions, extraction results and native-analysis handoffs                             | Binwalk / Unblob on Linux; [firmware guide](docs/firmware-analysis.md)                                                                |
@@ -165,6 +166,8 @@ Native formats and host support vary by provider. See
 [IDA guide](docs/ida-provider.md), and
 [experimental Windows Ghidra support](docs/windows-ghidra-p0.md).
 Ghidra also supports [16-bit DOS analysis](docs/ghidra-dos.md).
+Check [release availability](docs/installation.md#released-package-and-main)
+for features added since the latest npm release.
 
 ## Showcases
 
