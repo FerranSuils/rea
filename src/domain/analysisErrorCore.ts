@@ -4,6 +4,21 @@ import {
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
 
+/** Provider reported a resource failure, distinct from malformed input or unsupported coverage. */
+export class AnalysisResourceConstraintError extends AnalysisError {
+  readonly _tag = "AnalysisResourceConstraintError";
+
+  constructor(
+    readonly operation: string,
+    readonly resource: "memory",
+    readonly reason: string,
+    readonly reportedLimits: Readonly<Record<string, JsonValue>> | null,
+    options?: AnalysisErrorOptions,
+  ) {
+    super(`Resource constraint during ${operation}: ${reason}`, options);
+  }
+}
+
 /** Provider-neutral invalid analysis input or output at an application boundary. */
 export class AnalysisProtocolError extends AnalysisError {
   readonly _tag = "AnalysisProtocolError";

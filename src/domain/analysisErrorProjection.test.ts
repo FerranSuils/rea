@@ -5,6 +5,7 @@ import {
   AnalysisOutputError,
   AnalysisCancelledError,
   AnalysisTimeoutError,
+  AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
 import { ArtifactOperationError } from "./artifactOperationError.js";
 import { BinaryTargetError } from "./configurationErrors.js";
@@ -19,12 +20,43 @@ import { ProviderAdapterError } from "./providerAdapterError.js";
 import { UnknownRegistryError } from "./unknownRegistryError.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { ProviderSelectionError } from "./providerSelectionError.js";
+import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
 
 const retainedOutput = {
   stdout: "selected output\u0000",
   stderr: "upstream warning",
   truncated: true,
 };
+
+it.each([null, { address_space_bytes: 67108864 }])(
+  "projects reported resource constraints with observed or unknown limits: %j",
+  (limits) => {
+    const projected = projectAnalysisError(
+      new AnalysisResourceConstraintError(
+        "inspect_binary_layout",
+        "memory",
+        "Memory allocation failed; exact cause unknown.",
+        limits,
+        { capturedOutput: retainedOutput },
+      ),
+    );
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      category: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "memory",
+        reported_limits: limits,
+        captured_output: retainedOutput,
+      },
+    });
+    expect(projected.remediation.action).toContain("memory");
+    expect(projected.remediation.action).not.toContain("doctor");
+    expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
+      true,
+    );
+  },
+);
 it.each([
   new AnalysisInputError("inspect", { capturedOutput: retainedOutput }),
   new AnalysisOutputError("inspect", "invalid reply", {

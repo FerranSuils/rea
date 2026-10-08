@@ -18,6 +18,7 @@ import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -55,6 +56,26 @@ const replySchema = z.discriminatedUnion("ok", [
       "decoder",
     ]),
     message: z.string(),
+    reported_limits: z
+      .strictObject({
+        address_space_bytes: z
+          .number()
+          .int()
+          .nonnegative()
+          .max(PWNTOOLS_LIMITS.addressSpaceBytes),
+        cpu_seconds: z
+          .number()
+          .int()
+          .nonnegative()
+          .max(PWNTOOLS_LIMITS.cpuSeconds),
+        file_size_bytes: z
+          .number()
+          .int()
+          .nonnegative()
+          .max(PWNTOOLS_LIMITS.outputBytes),
+      })
+      .nullable()
+      .optional(),
   }),
 ]);
 
@@ -170,6 +191,14 @@ export class PwntoolsLayoutProvider implements BinaryLayoutPort {
         );
       }
       if (!reply.ok) {
+        if (reply.reason === "resource-limit")
+          throw new AnalysisResourceConstraintError(
+            OPERATION,
+            "memory",
+            reply.message,
+            reply.reported_limits ?? null,
+            { capturedOutput },
+          );
         if (reply.reason === "format")
           throw new AnalysisInputError(OPERATION, { capturedOutput }, [
             {

@@ -321,6 +321,15 @@ try {
     );
     return [`zero-entry-${type}`, bytes, "invalid_input"];
   });
+  const undersizedSymbolEntries = ["SHT_SYMTAB", "SHT_DYNSYM"].map((type) => {
+    const section = protectedReport.sections.find((item) => item.type === type);
+    assert.notEqual(section, undefined);
+    const bytes = Buffer.from(sectionBearingBytes);
+    const header = Number(BigInt(section.header_location.offset));
+    bytes.writeBigUInt64LE(8n, header + 32);
+    bytes.writeBigUInt64LE(8n, header + 56);
+    return [`undersized-entry-${type}`, bytes, "invalid_input"];
+  });
   const symbolTable = relocatable.sections.find(
     (section) => section.type === "SHT_SYMTAB",
   );
@@ -424,6 +433,76 @@ try {
     }
   }
   const unsupported = Buffer.from(object);
+  const originalSectionOffset = Number(object.readBigUInt64LE(40));
+  const sectionSize = object.readUInt16LE(58);
+  const originalSectionCount = object.readUInt16LE(60);
+  const sectionCount = 30000;
+  const sectionOffset = Math.ceil(object.length / 8) * 8;
+  const sectionHeavy = Buffer.alloc(sectionOffset + sectionCount * sectionSize);
+  object.copy(sectionHeavy);
+  object.copy(
+    sectionHeavy,
+    sectionOffset,
+    originalSectionOffset,
+    originalSectionOffset + originalSectionCount * sectionSize,
+  );
+  for (let index = originalSectionCount; index < sectionCount; index++) {
+    sectionHeavy.writeUInt32LE(1, sectionOffset + index * sectionSize + 4);
+    sectionHeavy.writeBigUInt64LE(1n, sectionOffset + index * sectionSize + 48);
+  }
+  sectionHeavy.writeBigUInt64LE(BigInt(sectionOffset), 40);
+  sectionHeavy.writeUInt16LE(sectionCount, 60);
+  const sectionHeavyPath = join(root.path, "section-heavy.o");
+  await writeFile(sectionHeavyPath, sectionHeavy);
+  const memoryWrapper = join(root.path, "python-memory-constraint");
+  const quotedPython = "'" + python.replaceAll("'", "'\"'\"'") + "'";
+  await writeFile(
+    memoryWrapper,
+    `#!/bin/sh\nexec /usr/bin/prlimit --as=100663296 -- ${quotedPython} "$@"\n`,
+    { mode: 0o700 },
+  );
+  const memoryEnvironment = {
+    ...environment,
+    REA_PWNTOOLS_PYTHON: memoryWrapper,
+  };
+  const memoryClient = new Client({
+    name: "memory-layout-verifier",
+    version: "1",
+  });
+  const memoryTransport = new StdioClientTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env: memoryEnvironment,
+    stderr: "pipe",
+  });
+  try {
+    await memoryClient.connect(memoryTransport);
+    for (const mode of ["cli", "mcp"]) {
+      const error = await inspect(
+        mode,
+        sectionHeavyPath,
+        "resource_constraint",
+        memoryEnvironment,
+        memoryClient,
+      );
+      assert.equal(error.code, "resource_constraint");
+      assert.equal(error.details.resource, "memory");
+      assert.equal(
+        error.details.reported_limits.address_space_bytes,
+        100663296,
+      );
+      assert.equal(error.details.captured_output.truncated, false);
+      assert.ok(error.remediation.action.includes("memory"));
+      cases++;
+    }
+    assert.deepEqual(await readFile(sectionHeavyPath), sectionHeavy);
+  } finally {
+    try {
+      await memoryClient.close();
+    } finally {
+      await memoryTransport.close();
+    }
+  }
   unsupported.writeUInt16LE(183, 18);
   const core = Buffer.from(object);
   core.writeUInt16LE(4, 16);
@@ -436,6 +515,7 @@ try {
       "invalid_input",
     ],
     ...zeroSymbolEntries,
+    ...undersizedSymbolEntries,
     ["arm64", unsupported, "unsupported_provider"],
     ["core", core, "unsupported_provider"],
   ]) {

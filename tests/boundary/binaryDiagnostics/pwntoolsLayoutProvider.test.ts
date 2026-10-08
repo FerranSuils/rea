@@ -20,6 +20,65 @@ const requestSchema = z.strictObject({
   reply_path: z.string(),
 });
 
+it.runIf(!unsupportedHost).each([
+  null,
+  {
+    address_space_bytes: 67108864,
+    cpu_seconds: 20,
+    file_size_bytes: 33554432,
+  },
+])(
+  "preserves reported memory failure, budgets, diagnostics and cleanup: %j",
+  async (limits) => {
+    const { path } = await fixture();
+    let ownedPath = "";
+    const provider = new PwntoolsLayoutProvider(
+      { REA_PWNTOOLS_PYTHON: process.execPath },
+      async (spawn) => {
+        ownedPath = spawn.cwd ?? "";
+        const requestPath = spawn.arguments.at(-1);
+        if (requestPath === undefined) throw new Error("Request path missing");
+        const request = requestSchema.parse(
+          JSON.parse(await readFile(requestPath, "utf8")),
+        );
+        await writeFile(
+          request.reply_path,
+          JSON.stringify({
+            ok: false,
+            reason: "resource-limit",
+            message: "Memory allocation failed; exact cause unknown.",
+            reported_limits: limits,
+          }),
+        );
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            "process.stderr.write('upstream allocation diagnostic')",
+          ],
+        });
+      },
+    );
+    const result = await provider.inspect({ path });
+    if (result.ok) throw new Error("Expected resource failure");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "resource_constraint",
+      category: "resource_constraint",
+      details: {
+        resource: "memory",
+        reported_limits: limits,
+        captured_output: {
+          stderr: "upstream allocation diagnostic",
+          truncated: false,
+        },
+      },
+    });
+    await expect(access(ownedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path, "utf8")).toBe("source-owned-seam-bytes");
+  },
+);
+
 it.runIf(!unsupportedHost).each(["cancelled", "output-limit", "process"])(
   "releases an acquired decoder and its snapshot after %s",
   async (scenario) => {

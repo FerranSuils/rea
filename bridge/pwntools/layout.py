@@ -150,6 +150,8 @@ def inspect_elf(path, cache):
                     "entry_size": address(h.sh_entsize), "file_backing": "file" if backing else "none",
                 })
                 if h.sh_type in ("SHT_SYMTAB", "SHT_DYNSYM"):
+                    if h.sh_entsize < image.structs.Elf_Sym.sizeof():
+                        raise LayoutFailure("format", "ELF symbol entry is smaller than the decoded Elf64_Sym structure.")
                     strings = all_sections[h.sh_link] if h.sh_link < len(all_sections) else None
                     for entry, symbol in enumerate(section.iter_symbols()):
                         raw = symbol.entry
@@ -265,7 +267,7 @@ def main(request_path):
     except LayoutFailure as error:
         reply = {"ok": False, "reason": error.reason, "message": str(error)}
     except MemoryError:
-        reply = {"ok": False, "reason": "resource-limit", "message": "pwntools exceeded its effective address-space budget: " + str(limits)}
+        reply = {"ok": False, "reason": "resource-limit", "message": "pwntools memory allocation failed under the effective resource limits; the exact allocation cause is unknown.", "reported_limits": limits}
     except Exception as error:
         reply = {"ok": False, "reason": "decoder", "message": type(error).__name__ + ": " + str(error)}
     encoded = json.dumps(reply, ensure_ascii=True, allow_nan=False).encode("utf-8")

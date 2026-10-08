@@ -10,4 +10,6 @@ export const PWNTOOLS_LIMITS = {
   outputBytes: 64 * 1024 * 1024,
   diagnosticBytes: 1024 * 1024,
   timeoutMs: 30_000,
+  addressSpaceBytes: 3 * 1024 * 1024 * 1024,
+  cpuSeconds: 30,
 } as const;

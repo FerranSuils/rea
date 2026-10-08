@@ -81,3 +81,8 @@ real support claim for those features or other operating systems/architectures.
 
 Typed decoder failures retain bounded `captured_output` (stdout, stderr and an
 explicit truncation flag) alongside the original failure category and reason.
+Memory allocation failures use `resource_constraint`, with effective resource
+limits (or an explicit unknown) and memory-specific recovery guidance. A
+MemoryError alone does not establish the exact failed allocation or that a
+particular budget was exhausted. Invalid undersized symbol entries are rejected
+before REA reports source ranges for them.
