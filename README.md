@@ -20,7 +20,7 @@
 
 **[Website](https://morluto.github.io/rea/) · [Guides](https://morluto.github.io/rea/guides/) · [Showcases](https://morluto.github.io/rea/showcase/)**
 
-[Quick start](#quick-start) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [Documentation](#documentation)
+[Quick start](#quick-start) · [How REA works](#how-rea-works) · [What you can analyze](#what-you-can-analyze) · [Showcases](#showcases) · [FAQ](#faq) · [Documentation](#documentation)
 
 <code>npx rea-agents setup</code>
 
@@ -81,8 +81,6 @@ similar feature for my project.
 ```
 
 Replace Notes with your target app and the feature you want to understand.
-REA supplies code, metadata and evidence; your agent uses those results to
-explain the feature, then writes and tests an implementation for your project.
 
 ### Use the terminal
 
@@ -105,6 +103,17 @@ rea --help
 For native analysis, configure a provider first. See the
 [CLI and Evidence guide](docs/cli.md) for native commands, provider selection,
 snapshots and scripting.
+
+## How REA works
+
+Your agent calls REA through MCP to inspect the target and trace relevant code.
+REA returns findings with their evidence. The agent uses them to ask follow-up
+questions, explain the behavior, or write and test an implementation.
+CLI commands use the same workflows.
+
+![REA investigation flow: your agent asks about a local target, REA inspects and traces it using analysis tools, and the agent uses the returned code, references and unknowns to explain, implement and test.](website/public/assets/figures/rea-investigation-flow.svg)
+
+[Open the full-size figure](website/public/assets/figures/rea-investigation-flow.svg).
 
 ## What you can analyze
 
@@ -159,6 +168,48 @@ historical compiler output.
 [Read the case study](https://morluto.github.io/rea/showcase/th04/) ·
 [Reconstruction repository](https://github.com/N0zoM1z0/th04)
 
+If you've used REA on something interesting, we'd love to see it. Share your
+case in an [issue](https://github.com/morluto/rea/issues) or a
+[pull request](https://github.com/morluto/rea/pulls), including the target,
+your question, how REA helped, and what you found.
+
+## FAQ
+
+### Which agents can use REA?
+
+Any agent that supports local MCP servers. Setup configures the
+[supported agents](docs/installation.md#supported-agents); other clients can use
+[manual MCP registration](docs/installation.md#mcp-registry).
+
+### Do I need Hopper, Ghidra or IDA?
+
+Deep native analysis uses one of them. Static JavaScript and .NET inspection
+work without a native analysis engine. Setup can install Hopper after approval;
+Ghidra and IDA use your existing installations. See [provider setup](docs/installation.md#hopper).
+
+### Do I need to start Hopper first?
+
+REA starts Hopper when an operation needs it. On macOS, a first-run dialog may
+ask you to choose demo mode or activate your license. See
+[Hopper startup and troubleshooting](docs/installation.md#launcher-paths-and-troubleshooting).
+
+### What does installing the skill from skills.sh do?
+
+The skill supplies investigation instructions for your agent. Use `rea setup`
+to register REA's MCP server and install the matching instructions, then restart
+your agent. See [skill-only installation](docs/installation.md#skill-only-installation).
+
+### What code does REA return?
+
+Native analysis returns pseudocode and assembly. JavaScript/Electron analysis
+recovers modules and their relationships. Your agent uses these findings to
+write and test an implementation; the [showcases](#showcases) give worked examples.
+
+### Does REA upload my app?
+
+REA analyzes targets locally. Your agent receives the tool results, and its
+model provider has its own data policy.
+
 ## Documentation
 
 Start with the website's [worked guides](https://morluto.github.io/rea/guides/).
@@ -171,21 +222,13 @@ For exact options, prerequisites and result contracts:
 - [Tool catalog](docs/product-catalog.json): generated inventory of tools, providers and CLI commands.
 - [Roadmap](docs/roadmap.md): planned work and capability trackers.
 
-REA analyzes targets locally. Your coding agent's model provider has its own
-data policy. Report vulnerabilities through [SECURITY.md](SECURITY.md).
+Report vulnerabilities through [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and checks,
 [testing](docs/testing.md) for verification lanes, and the
 [architecture map](docs/architecture.mermaid) for the project structure.
-
-Have a useful REA investigation to share? Open an
-[issue](https://github.com/morluto/rea/issues) or a
-[pull request](https://github.com/morluto/rea/pulls) with the question,
-selected evidence and result. The
-[Discord community](https://discord.gg/GkcryMnJDM) is also open for questions
-and examples.
 
 ## Project links
 
@@ -205,7 +248,6 @@ and examples.
   </picture>
 </a>
 
-## Use responsibly
+## Disclaimer
 
-Use REA for lawful research, analysis and reconstruction, with the required
-authorization for your target.
+REA provides tools for lawful reverse-engineering research, analysis, and reconstruction. You are responsible for obtaining any required authorization and complying with applicable laws. The project does not endorse illegal or unauthorized use.
